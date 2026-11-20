@@ -1,0 +1,11 @@
+{
+  "format": "angular-anything/case@0",
+  "id": "delete-task",
+  "description": "Delete both tasks: focus moves to the New task input",
+  "viewport": { "width": 1024, "height": 768 },
+  "steps": [
+    { "action": "goto", "path": "/" },
+    { "action": "click", "target": { "role": "button", "name": "Delete Buy milk" } },
+    { "action": "click", "target": { "role": "button", "name": "Delete Write report" } }
+  ]
+}

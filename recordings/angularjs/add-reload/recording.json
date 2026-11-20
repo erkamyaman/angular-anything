@@ -1,0 +1,9 @@
+{
+  "format": "angular-anything/recording@0",
+  "suite": "fixture",
+  "case": "add-reload",
+  "source": "angularjs",
+  "url": "http://localhost:4103/",
+  "steps": 4,
+  "masked": []
+}

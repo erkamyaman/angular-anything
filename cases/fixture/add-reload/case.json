@@ -1,0 +1,12 @@
+{
+  "format": "angular-anything/case@0",
+  "id": "add-reload",
+  "description": "Add a task and reload: the task comes back from localStorage",
+  "viewport": { "width": 1024, "height": 768 },
+  "steps": [
+    { "action": "goto", "path": "/" },
+    { "action": "fill", "target": { "role": "textbox", "name": "New task" }, "value": "Call mom" },
+    { "action": "click", "target": { "role": "button", "name": "Add" } },
+    { "action": "reload" }
+  ]
+}

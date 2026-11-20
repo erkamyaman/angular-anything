@@ -1,0 +1,11 @@
+{
+  "name": "fixture-angularjs",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "angular": "1.8.3"
+  }
+}

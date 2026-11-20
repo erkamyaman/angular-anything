@@ -1,0 +1,11 @@
+{
+  "format": "angular-anything/case@0",
+  "id": "details",
+  "description": "Open and close the Details section",
+  "viewport": { "width": 1024, "height": 768 },
+  "steps": [
+    { "action": "goto", "path": "/" },
+    { "action": "click", "target": { "role": "button", "name": "Details" } },
+    { "action": "click", "target": { "role": "button", "name": "Details" } }
+  ]
+}

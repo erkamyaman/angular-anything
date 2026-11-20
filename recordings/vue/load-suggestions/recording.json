@@ -1,0 +1,9 @@
+{
+  "format": "angular-anything/recording@0",
+  "suite": "fixture",
+  "case": "load-suggestions",
+  "source": "vue",
+  "url": "http://localhost:4102/",
+  "steps": 2,
+  "masked": []
+}

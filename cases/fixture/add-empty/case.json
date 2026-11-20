@@ -1,0 +1,12 @@
+{
+  "format": "angular-anything/case@0",
+  "id": "add-empty",
+  "description": "Add with an empty title and with a title of spaces: nothing is added",
+  "viewport": { "width": 1024, "height": 768 },
+  "steps": [
+    { "action": "goto", "path": "/" },
+    { "action": "click", "target": { "role": "button", "name": "Add" } },
+    { "action": "fill", "target": { "role": "textbox", "name": "New task" }, "value": "   " },
+    { "action": "click", "target": { "role": "button", "name": "Add" } }
+  ]
+}

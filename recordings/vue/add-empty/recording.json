@@ -1,0 +1,15 @@
+{
+  "format": "angular-anything/recording@0",
+  "suite": "fixture",
+  "case": "add-empty",
+  "source": "vue",
+  "url": "http://localhost:4102/",
+  "steps": 4,
+  "masked": [
+    {
+      "step": 2,
+      "layer": "screenshot",
+      "path": ""
+    }
+  ]
+}

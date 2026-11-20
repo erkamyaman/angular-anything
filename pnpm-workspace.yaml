@@ -1,0 +1,11 @@
+packages:
+  - fixtures/react
+  - fixtures/vue
+  - fixtures/angularjs
+  - fixtures/angular
+
+allowBuilds:
+  '@parcel/watcher': false
+  esbuild: false
+  lmdb: false
+  msgpackr-extract: false

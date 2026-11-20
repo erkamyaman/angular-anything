@@ -1,0 +1,9 @@
+{
+  "format": "angular-anything/recording@0",
+  "suite": "fixture",
+  "case": "filter-tabs",
+  "source": "react",
+  "url": "http://localhost:4101/",
+  "steps": 4,
+  "masked": []
+}
