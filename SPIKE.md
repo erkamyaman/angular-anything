@@ -57,7 +57,7 @@ One small page. All four implementations must produce the same DOM (after framew
 </main>
 ```
 
-Mounting: every implementation has `<div id="root"></div>` as the only content element of `<body>` and renders `<main class="app">` as the only child of that div. The verifier captures `document.body` and ignores `<script>`, `<style>` and `<link>` elements. The Angular port bootstraps its root component on `#root`, so there is no `<app-root>` element.
+Mounting: every implementation has `<div id="root"></div>` as the only content element of `<body>` and renders `<main class="app">` as the only child of that div. The verifier captures the `html` element without `head`, and the document title, and ignores `<script>`, `<style>` and `<link>` elements. The Angular port bootstraps its root component on `#root`, so there is no `<app-root>` element.
 
 Behavior:
 
@@ -99,7 +99,7 @@ Seeded bugs: the Angular port reads `?bug=<name>` and misbehaves on purpose. The
 | `text` | count always says `tasks` | accessibility and DOM |
 | `request` | the POST body has no title | side effects |
 | `storage` | nothing is written to `localStorage` | side effects |
-| `focus` | Delete leaves focus on the body | focus |
+| `focus` | Delete leaves focus on the body | side effects (field `focus`) |
 | `style` | the port adds `margin-left: 3px` to `.count` | style and geometry |
 
 ## Layout
@@ -154,7 +154,7 @@ angular-anything replay <suite> --source <name> --url <port-url>
 angular-anything gate   <suite> --source <name> --url <port-url>
 ```
 
-`replay` writes a report. `gate` is `replay` plus the lock check, and exits 1 on any hard mismatch, any tampered or stale recording, or zero cases. `setup`, `review` and `mcp` come later.
+`replay` writes a report and exits 1 on any hard mismatch. `gate` is `replay` plus the lock check, and exits 1 on any hard mismatch, any tampered or stale recording, or zero cases. `setup`, `review` and `mcp` come later.
 
 ## Done when
 
@@ -169,3 +169,113 @@ angular-anything gate   <suite> --source <name> --url <port-url>
 ## Not in this milestone
 
 TodoMVC, sonner, the porting skill, the MCP server, the network tape, secret redaction, CI, publishing to npm, and any git operation. The maintainer runs git and creates the GitHub repo.
+
+# Spike, milestone 2: a gate that does not depend on the machine or on how the fixture is written
+
+Status: in progress since 2026-11-21. Nothing here is published or stable.
+
+Decisions Q33, Q35, Q37 and Q38 (Round 5) and Q50 to Q61 (Round 6) of the planning notes bind this milestone. The findings it answers are in [SPIKE-RESULTS.md](SPIKE-RESULTS.md) under "Second review, after the fix pass". Where this part contradicts the milestone 1 part above, this part counts.
+
+## Goal
+
+Same commands, same fixture. After this milestone:
+
+- The exit code of a gate does not depend on the speed or the load of the machine.
+- Every page pair of the second review where a faithful port failed passes, and every pair where a port that differs passed fails.
+- Every rule has a test that fails when the rule is switched off.
+
+How the work is done:
+
+- A finding is reproduced before code changes, with a test or a script that fails.
+- The gate is never loosened globally to get a pass, and no tolerance is added.
+- A done-item is never bent. If a decided design cannot meet it, the design is built as written, measured, and the gap is reported with its numbers.
+- Every number comes from a command that was run, with how often it ran.
+- No git operation. No explanatory comments in the code.
+
+Each step leaves what it built and measured in the planning notes (`m2/step<N>.md`). Step 6 writes SPIKE-RESULTS.md from them.
+
+## Step 1: the paused clock (Q35, Q50)
+
+- The runner installs the clock paused at the fixed start time. Page time moves only when the runner moves it, in frames of 16 ms.
+- After each frame the runner finishes every finite CSS animation and transition. An endless animation is held at a fixed point (for example its start), so it looks the same in every observation.
+- While a request is in flight the runner waits in real time and does not advance the clock.
+- A step is settled when two observations one frame apart are identical and no request is in flight. The limit of a step is a number of frames, not a number of seconds.
+- `advance` takes `frames`. `ms` is no longer accepted, and the message names the conversion. The case format becomes `angular-anything/case@1`.
+- The stable screenshot stays. Its wait is real time and moves no page time.
+- The starting point is what `research/gap-time-and-input-fidelity.md` of the planning notes measured (sources in `experiments/gap-time`). Its experiment becomes a test in this repo: one case run 20 times gives one end state.
+
+Done when:
+
+1. Every port of the toast table (800 to 4000 ms against 2000 ms) and every port that renders late (40 to 250 ms) gets the same exit code in 10 of 10 runs, and the same one at CPU throttle rates 1, 8 and 20.
+2. The clean port passes at CPU throttle rates 1, 8, 20 and 40.
+3. A page with an endless stepped animation passes against its own recording in 35 of 35 gates. A page with an endless smooth animation can be recorded and passes against its own recording.
+4. A still and a moving variant of one page (a canvas that repaints, a spinner in a shadow root, an animated GIF) differ in screenshots only, and each unchanged page passes against its own recording in 12 of 12 gates.
+5. Recording the three originals 5 more times gives the same root hash for every case, every time.
+6. The settle logic has a test that does not depend on real time (a fake page and a fake request log). It fails in 10 of 10 runs when the rule about requests is removed.
+
+## Step 2: compare what the browser means (Q54, Q57, Q59)
+
+- Text (Q57). A text node is compared as the browser collapses it. Where the parent collapses whitespace, a run of whitespace counts as one space, and a run at the start or at the end of the node counts only if the browser gives it a box. Where the parent preserves whitespace, the text is compared as written. The browser is asked, CSS is not implemented a second time.
+- `style` attribute (Q59). Compared as the declarations the browser parsed, not as text.
+- `textarea` (Q59). Compared by its value. Its text child is not part of the canonical DOM.
+- `url()` (Q59). In computed values the origin of the page itself is replaced by a fixed word, so the same relative URL compares equal on two origins. A URL to another host stays as it is.
+- AngularJS (Q54). One proof for every attribute: it is dropped when the injector has a directive of that name, built-in ones included, or when it is a declared binding of a directive on that element, `.component()` and element directives included. Any other `ng-` attribute stays. A text binding stays when the browser reads the attribute: a property of the element (compared without case, and with the renames between attribute and property such as `class` and `for`), a global HTML attribute, `aria-*`, `role`, or an SVG presentation attribute.
+- Three small ones from the second review, each reproduced first. The boolean attribute rule applies only where the element has that boolean property. An event payload keeps a `Set`, a `Map`, `NaN` and `undefined` apart. A custom property registered with `inherits: false` is compared per element.
+
+Done when:
+
+1. The page pairs under "A faithful port fails" pass, except the plain attribute selector, which stays a failure by decision (step 4). For text that means all three sources, with the port written with and without the line breaks.
+2. Each has a control that still fails: a space that renders (`<span>a</span> <span>b</span>` against `<span>a</span><span>b</span>`), another declaration in `style`, another `textarea` value, a `url()` to another file, a missing attribute that the browser reads.
+3. The three clean gates pass with 0 masks, and the 24 gates of the seeded bugs fail in the same layers as in milestone 1.
+4. Each rule has a unit test, and the test fails when the rule is switched off. That is checked by switching it off.
+
+## Step 3: masks (Q53)
+
+- A string with structure is compared by its parts: a `localStorage` value that is JSON, a URL (path and query parameters), a form body and a multipart body (fields). Differences and masks then name the part.
+- A mask never hides a missing value. At a masked path the port must have a value of the same kind.
+- A key that holds `.`, `/` or `[` cannot be taken for a child path.
+- `record` exits 1 when it has to mask a path in a hard layer that the case does not name. A case names the noise it expects in a list `noise` of layer and path, with `*` for any index. `record` prints each such path in the form the case needs. A screenshot mask never fails `record`.
+
+Done when:
+
+1. On the mask page of the second review the five ports with one defect fail. Without `noise`, `record` exits 1 and names the paths. With it, `record` exits 0 and the faithful page passes.
+2. The Tasks fixture records with 0 masks and without `noise`.
+3. Each rule has a unit test that fails when the rule is switched off.
+
+## Step 4: the rest (Q51, Q52, Q55, Q56, Q58, Q60)
+
+- Tolerance (Q52). Box numbers are compared exactly. The 0.5 px tolerance and the 1e-9 slack are removed.
+- Dialogs and windows (Q55). `alert`, `confirm`, `prompt` and `window.open` are logged in the side effects. Dialogs are dismissed as before. A step that answers a dialog is not built.
+- Cases (Q56). The ten extra cases named in SPIKE-RESULTS.md ("Fixtures") join `cases/fixture`.
+- Selector attribute (Q58). No gate rule. The convention for a port: the selector of a component is something the original element already matches (tag and class such as `li.task`, or an existing attribute such as `[id=root]`), else an input alias that is bound. `li.task` is tried on the fixture port and used there if the DOM stays the same. When the only DOM differences of a step are attributes with an empty value that only the port has, the summary names this convention.
+- Clean-up (Q60). The test gaps and the findings that one reviewer reported (SPIKE-RESULTS.md, "Tests" and "Reported by one reviewer, not repeated"): each is reproduced first, then fixed with a test, or listed with its measurement and the reason it stays. The explanatory comments in `src/` and `test/` are removed.
+- Spec (Q51). Done in the milestone 1 part above: the capture is `html` without `head` plus the title, focus is a field of the side effects, `replay` exits 1 on a hard mismatch.
+
+Done when:
+
+1. A port that calls `alert` on every add fails, and so does one that calls `window.open`.
+2. The 19 cases pass for all three sources with 0 masks, in 10 of 10 runs each, and the port with a broken Enter key fails.
+3. For each finding of the clean-up: its reproduction, and the fix with its test or the reason it stays.
+4. The done-items of steps 1 to 3 still hold.
+
+## Step 5: the remaining Round 5 rules (Q33, Q37, Q38)
+
+- Geometry in the same session (Q33). Sizes, positions and screenshots are compared only against the original run again in the same session: `gate` and `replay` take `--original-url`. Without it these values are not compared, and the report says so. Everything else is compared against the stored recording as before. Which longhands hold sizes is measured, starting from `research/gap-gate-calibration-spike.md`.
+- Network tape (Q37). `record` stores each request and its answer in the recording. `replay` and `gate` answer the requests of the port from that tape, keyed by the canonical request and the state, as measured in `research/gap-stateful-network-replay.md` (sources in `experiments/netreplay`). A changed mutation, a request that the tape does not hold and a changed credential header fail the gate. How often and in which order reads are sent is reported and does not fail it.
+- Secrets (Q38). `record` refuses to write a recording that holds a detected secret. It names the path and prints no value. Cookies and auth headers are never stored. The starting point is `research/gap-recording-secrets-and-untrusted-content.md`.
+
+Done when:
+
+1. With `--original-url` the `style` bug fails in sizes and positions as before. Without it the same bug still fails in the stored longhands, and the report says that sizes were not compared.
+2. The port passes the gate with the mock API switched off, answered from the tape. A port with a changed POST body fails, one that sends a request the tape does not hold fails, and one that sends the GET twice passes with a note.
+3. A recording that would hold a token (in `localStorage`, in a request header, in the body of an answer) is refused, 3 of 3.
+4. The experiments behind the three reports are tests in this repo.
+5. The done-items of steps 1 to 4 still hold.
+
+## Step 6: measure and review
+
+SPIKE-RESULTS.md is written again for the code as it then is, in the form of milestone 1: verdict, gate matrix, timings, what each step changed, what is not covered, open points. The 54 ports with one defect and the page pairs of the second review are gated again. Then reviewers who did not build it go through all of it, and what they find is fixed or listed.
+
+## Not in this milestone
+
+TodoMVC, sonner, the porting skill, the MCP server, `setup` and `review`, CI, publishing to npm, and any git operation.
