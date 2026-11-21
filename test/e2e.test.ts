@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -14,6 +14,8 @@ const cli = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 // data-nonce is different on every load, so it is noise that the two recording runs have to mask.
 // Save shows its result 40 ms after the slow POST has answered, and Loud takes effect after 150 ms of mutations
 // that the canonical DOM does not show, so an observation taken before the page settled is wrong.
+// Loud then repaints half of the canvas for 10 frames, so a screenshot taken right after the page settled is noise.
+// With ?bug=restless the page changes every 20 ms and never settles.
 const page = `<!doctype html>
 <html lang="en">
 <head>
@@ -43,12 +45,14 @@ const page = `<!doctype html>
   const button = document.getElementById('save');
   const loud = document.getElementById('loud');
   const state = document.getElementById('state');
+  const marker = main.appendChild(document.createComment(''));
 
   main.dataset.nonce = String(Math.random());
   const swatch = document.getElementById('swatch').getContext('2d');
   swatch.fillStyle = bug === 'pixels' ? 'rgb(200, 0, 0)' : 'rgb(0, 0, 200)';
   swatch.fillRect(0, 0, 16, 16);
   if (localStorage.getItem('name')) state.textContent = 'saved ' + localStorage.getItem('name');
+  if (bug === 'restless') setInterval(() => (state.textContent = String(performance.now())), 20);
   if (bug === 'style') {
     const style = document.createElement('style');
     style.textContent = '#state { margin-left: 3px; }';
@@ -85,10 +89,17 @@ const page = `<!doctype html>
     window.__aa?.emit('loud', { on: loud.checked });
     let ticks = 0;
     const busy = setInterval(() => {
-      main.setAttribute('ng-busy', String(ticks));
+      marker.data = String(ticks);
       if (++ticks < 15) return;
       clearInterval(busy);
       main.classList.toggle('loud', loud.checked);
+      let frame = 0;
+      const paint = () => {
+        swatch.fillStyle = 'rgb(0, ' + frame * 20 + ', 0)';
+        swatch.fillRect(8, 0, 8, 16);
+        if (frame++ < 10) requestAnimationFrame(paint);
+      };
+      requestAnimationFrame(paint);
     }, 10);
   });
 </script>
@@ -112,13 +123,13 @@ const steps = [
 // The layers the summary must name at the first differing step, and the path of a first difference.
 const bugs: Record<string, { layers: string[]; path: string }> = {
   events: { layers: ['events'], path: '[1]' },
-  dom: { layers: ['DOM', 'style and geometry'], path: 'body[1]/main[1]/p[1].attrs.class' },
+  dom: { layers: ['DOM', 'style and geometry'], path: 'html[1]/body[1]/main[1]/p[1].attrs.class' },
   aria: { layers: ['accessibility', 'DOM'], path: 'tree/main[1]/button[1].expanded' },
-  text: { layers: ['accessibility', 'DOM'], path: 'body[1]/main[1]/p[1]/text()[1]' },
+  text: { layers: ['accessibility', 'DOM'], path: 'html[1]/body[1]/main[1]/p[1]/text()[1]' },
   request: { layers: ['side effects'], path: 'requests[0].body.name' },
   storage: { layers: ['side effects'], path: 'storage.name' },
   focus: { layers: ['style and geometry', 'side effects'], path: 'the first at focus' },
-  style: { layers: ['style and geometry'], path: 'body[1]/main[1]/p[1].style.margin-left' },
+  style: { layers: ['style and geometry'], path: 'html[1]/body[1]/main[1]/p[1].style.inline-size' },
 };
 
 let root: string;
@@ -154,6 +165,21 @@ function run(...args: string[]): Promise<{ status: number | string; output: stri
 
 const gate = (url: string) => run('gate', 'tiny', '--source', 'original', '--url', url);
 const recorded = (...path: string[]) => join(root, 'recordings', 'original', 'save', ...path);
+const exists = (file: string) => access(file).then(
+  () => true,
+  () => false,
+);
+
+type Recorded = { style: Record<string, { style: Record<string, string> }> };
+
+// The value of a longhand for an element: its own, or the one of the closest ancestor that lists it.
+function longhand(observation: Recorded, path: string, property: string): string | undefined {
+  for (;;) {
+    const value = observation.style[path].style[property];
+    if (value !== undefined || !path.includes('/')) return value;
+    path = path.slice(0, path.lastIndexOf('/'));
+  }
+}
 const failingLayers = (output: string) =>
   [...output.matchAll(/^ {8}(accessibility|DOM|style and geometry|events|side effects): /gm)].map((match) => match[1]);
 
@@ -185,7 +211,7 @@ test('record launches Chromium, writes a locked recording and masks the noise of
   const recording = JSON.parse(await readFile(recorded('recording.json'), 'utf8'));
   assert.deepEqual(
     recording.masked,
-    steps.map((_, index) => ({ step: index + 1, layer: 'dom', path: 'body[1]/main[1].attrs.data-nonce' })),
+    steps.map((_, index) => ({ step: index + 1, layer: 'dom', path: 'html[1]/body[1]/main[1].attrs.data-nonce' })),
   );
 
   const afterEnter = JSON.parse(await readFile(recorded('03.json'), 'utf8'));
@@ -195,16 +221,18 @@ test('record launches Chromium, writes a locked recording and masks the noise of
     gets: [],
     storage: { name: 'Ada' },
     url: '/',
-    focus: 'body[1]/main[1]/input[1]',
+    title: 'Tiny',
+    focus: 'html[1]/body[1]/main[1]/input[1]',
   });
   assert.deepEqual(afterEnter.accessibility.tree[0].children[3], { role: 'button', name: 'Save', expanded: true });
-  assert.equal(afterEnter.style['body[1]/main[1]/p[1]'].style.color, 'rgb(180, 0, 0)');
-  const state = async (step: string) => JSON.parse(await readFile(recorded(step), 'utf8')).style['body[1]/main[1]/p[1]'].style;
-  assert.equal((await state('04.json')).color, 'rgb(0, 0, 0)', 'advance fires the 5000 ms timer');
-  assert.equal((await state('05.json'))['text-transform'], 'uppercase', 'the observation waits for the mutations to end');
-  assert.equal((await state('06.json'))['text-transform'], 'none');
+  const state = async (step: string, property: string) =>
+    longhand(JSON.parse(await readFile(recorded(step), 'utf8')), 'html[1]/body[1]/main[1]/p[1]', property);
+  assert.equal(await state('03.json', 'color'), 'rgb(180, 0, 0)');
+  assert.equal(await state('04.json', 'color'), 'rgb(0, 0, 0)', 'advance fires the 5000 ms timer');
+  assert.equal(await state('05.json', 'text-transform'), 'uppercase', 'the observation waits for the mutations to end');
+  assert.equal(await state('06.json', 'text-transform'), 'none');
   const afterReload = JSON.parse(await readFile(recorded('08.json'), 'utf8'));
-  assert.deepEqual(afterReload.dom.children[0].children.at(-2), {
+  assert.deepEqual(afterReload.dom.children[0].children[0].children.at(-2), {
     tag: 'p',
     attrs: { class: 'off', id: 'state' },
     children: ['saved Ada'],
@@ -246,7 +274,7 @@ test('replay writes the report, the summary and the screenshots that differ, and
   assert.equal(report.command, 'replay');
   assert.equal(report.result, 'fail');
   assert.deepEqual(report.cases[0].steps[2].layers.dom.first, [
-    { path: 'body[1]/main[1]/p[1]/text()[1]', expected: 'saved Ada', actual: 'stored Ada' },
+    { path: 'html[1]/body[1]/main[1]/p[1]/text()[1]', expected: 'saved Ada', actual: 'stored Ada' },
   ]);
   assert.equal(report.cases[0].steps[2].screenshot, 'different');
   assert.equal(report.cases[0].steps[1].screenshot, 'identical');
@@ -267,7 +295,7 @@ test('gate refuses a recording with one changed byte, replay does not check the 
 
     const replayed = await run('replay', 'tiny', '--source', 'original', '--url', port);
     assert.equal(replayed.status, 1, replayed.output);
-    assert.ok(replayed.output.includes('the first at body[1]/main[1]/input[1].props.value'), replayed.output);
+    assert.ok(replayed.output.includes('the first at html[1]/body[1]/main[1]/input[1].props.value'), replayed.output);
   } finally {
     await writeFile(recorded('02.json'), observation);
   }
@@ -284,6 +312,75 @@ test('gate refuses a recording whose case changed afterwards', async () => {
   } finally {
     await writeFile(file, unchanged);
   }
+});
+
+test('a case that cannot be read fails the run and leaves no report of an earlier run', async () => {
+  const file = join(root, 'cases', 'tiny', 'save', 'case.json');
+  const unchanged = await readFile(file);
+  const report = join(root, 'reports', 'original', 'report.json');
+  assert.equal((await gate(port)).status, 0);
+  assert.equal(await exists(report), true);
+  await writeFile(file, unchanged.toString().replace('{', '{,'));
+  try {
+    const { status, output } = await gate(port);
+    assert.equal(status, 1, output);
+    assert.match(output, /^gate failed: .*case\.json: /);
+    assert.equal(await exists(report), false);
+  } finally {
+    await writeFile(file, unchanged);
+  }
+});
+
+test('a recording is replayed only for the suite, source and case it was made for', async () => {
+  await cp(join(root, 'recordings', 'original'), join(root, 'recordings', 'copy'), { recursive: true });
+  const copied = await run('gate', 'tiny', '--source', 'copy', '--url', port);
+  assert.equal(copied.status, 1, copied.output);
+  assert.match(copied.output, /error: cannot replay against the recording: it was made for suite tiny, source original, case save/);
+  assert.match(copied.output, /0 of 0 compared steps differ/);
+
+  const recording = await readFile(recorded('recording.json'), 'utf8');
+  await writeFile(recorded('recording.json'), recording.replace('"steps": 8', '"steps": 7'));
+  try {
+    const replayed = await run('replay', 'tiny', '--source', 'original', '--url', port);
+    assert.equal(replayed.status, 1, replayed.output);
+    assert.match(replayed.output, /error: cannot replay against the recording: the recording has 7 steps, the case has 8/);
+  } finally {
+    await writeFile(recorded('recording.json'), recording);
+  }
+});
+
+test('gate fails when a recording of the suite has no case any more', async () => {
+  const orphan = join(root, 'recordings', 'original', 'removed');
+  await cp(recorded(), orphan, { recursive: true });
+  try {
+    const { status, output } = await gate(port);
+    assert.equal(status, 1, output);
+    assert.match(output, /^PASS {2}save {5}8 steps$/m);
+    assert.match(output, /^FAIL {2}removed\n {6}lock: the suite tiny has no case for this recording$/m);
+    assert.match(output, /1 of 2 cases failed/);
+
+    const other = JSON.parse(await readFile(join(orphan, 'recording.json'), 'utf8'));
+    await writeFile(join(orphan, 'recording.json'), JSON.stringify({ ...other, suite: 'another' }));
+    assert.equal((await gate(port)).status, 0, 'a recording of another suite is not this suite\'s business');
+  } finally {
+    await rm(orphan, { recursive: true });
+  }
+});
+
+test('record fails a case whose page never settles or whose target is missing, and writes nothing', async () => {
+  const restless = await run('record', 'tiny', '--source', 'restless', '--url', `${original}/?bug=restless`);
+  assert.equal(restless.status, 1, restless.output);
+  assert.match(
+    restless.output,
+    /^FAIL {2}save\n {6}step 1 \(goto \/\): never settled in 5000 ms: 0 requests in flight, layers still changing: accessibility, dom/m,
+  );
+  assert.match(restless.output, /Recorded 0 of 1 cases into recordings\/restless\./);
+
+  const missing = await run('record', 'tiny', '--source', 'missing', '--url', empty);
+  assert.equal(missing.status, 1, missing.output);
+  assert.match(missing.output, /^FAIL {2}save\n {6}step 2 \(fill textbox "Name" with "Ada"\): the target matches 0 elements$/m);
+  assert.equal(await exists(join(root, 'recordings', 'restless')), false);
+  assert.equal(await exists(join(root, 'recordings', 'missing')), false);
 });
 
 test('a page with an empty main passes no case', async () => {

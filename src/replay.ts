@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
 import { describeStep, loadSuite } from './case.ts';
@@ -12,8 +12,11 @@ import type { CaseReport, Report, StepReport } from './report.ts';
 import { runCase } from './run.ts';
 
 // Replays every case of the suite against the url and compares each step with the recording.
-// With gate, a recording that does not match its lock is refused and not replayed.
+// With gate, a recording that does not match its lock is refused and not replayed, and a recording of this suite
+// whose case is gone fails the run.
 export async function replay({ root, suite, source, url, gate }: Options & { gate: boolean }): Promise<number> {
+  const out = join(root, 'reports', source);
+  await rm(out, { recursive: true, force: true });
   const cases = await loadSuite(root, suite);
   const browser = await chromium.launch();
   try {
@@ -28,8 +31,6 @@ export async function replay({ root, suite, source, url, gate }: Options & { gat
       result: 'fail',
       cases: [],
     };
-    const out = join(root, 'reports', source);
-    await rm(out, { recursive: true, force: true });
     await mkdir(out, { recursive: true });
 
     for (const { case: testCase, sha256 } of cases) {
@@ -46,6 +47,11 @@ export async function replay({ root, suite, source, url, gate }: Options & { gat
           item.root = JSON.parse(await readFile(join(recorded, LOCK_FILE), 'utf8')).root;
         }
         const recording: Recording = JSON.parse(await readFile(join(recorded, RECORDING_FILE), 'utf8'));
+        if (recording.suite !== suite || recording.source !== source || recording.case !== testCase.id) {
+          throw new Error(
+            `it was made for suite ${recording.suite}, source ${recording.source}, case ${recording.case}`,
+          );
+        }
         if (recording.steps !== testCase.steps.length) {
           throw new Error(`the recording has ${recording.steps} steps, the case has ${testCase.steps.length}`);
         }
@@ -68,6 +74,20 @@ export async function replay({ root, suite, source, url, gate }: Options & { gat
         item.error = run.error;
       } catch (error) {
         item.error = `cannot replay against the recording: ${(error as Error).message}`;
+      }
+    }
+
+    if (gate) {
+      const recordings = join(root, 'recordings', source);
+      const ids = new Set(cases.map((loaded) => loaded.case.id));
+      for (const entry of await readdir(recordings, { withFileTypes: true }).catch(() => [])) {
+        if (!entry.isDirectory() || ids.has(entry.name)) continue;
+        const recording: Partial<Recording> = await readFile(join(recordings, entry.name, RECORDING_FILE), 'utf8')
+          .then(JSON.parse)
+          .catch(() => ({}));
+        if (recording.suite !== undefined && recording.suite !== suite) continue;
+        const lock = [`the suite ${suite} has no case for this recording`];
+        report.cases.push({ id: entry.name, result: 'fail', stepCount: 0, steps: [], lock });
       }
     }
 

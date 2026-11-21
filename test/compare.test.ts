@@ -44,6 +44,7 @@ function observation(): Observation {
       gets: ['/api/suggestions'],
       storage: { tasks: '[{"id":1}]' },
       url: '/',
+      title: 'Tasks',
       focus: button,
     },
   };
@@ -85,6 +86,7 @@ test('each layer reports the path and both values', () => {
       delete port.effects.storage.tasks;
       port.effects.focus = 'body[1]';
       port.effects.url = '/?x=1';
+      port.effects.title = 'Task list';
       port.effects.gets = [];
     }),
     {
@@ -93,6 +95,7 @@ test('each layer reports the path and both values', () => {
         { path: 'gets[0]', expected: '/api/suggestions', actual: undefined },
         { path: 'storage.tasks', expected: '[{"id":1}]', actual: undefined },
         { path: 'url', expected: '/', actual: '/?x=1' },
+        { path: 'title', expected: 'Tasks', actual: 'Task list' },
         { path: 'focus', expected: button, actual: 'body[1]' },
       ],
     },
@@ -147,7 +150,7 @@ test('geometry has a 0.5 px tolerance, computed style has none', () => {
   );
   assert.deepEqual(
     differences((port) => {
-      port.style[count].box.x = 288.51;
+      port.style[count].box!.x = 288.51;
       port.style[count].style['margin-left'] = '0.2px';
     }),
     {
@@ -162,6 +165,32 @@ test('geometry has a 0.5 px tolerance, computed style has none', () => {
       delete port.style[count];
     }),
     { style: [{ path: count, expected: observation().style[count], actual: undefined }] },
+  );
+});
+
+test('an element has the longhands it lists and those of its parent', () => {
+  const main = 'body[1]/main[1]';
+  const withParent = (color: string, pseudo: Record<string, string>): Observation => {
+    const result = observation();
+    result.style = {
+      [main]: { style: { color, display: 'flex' }, box: { x: 288, y: 0, width: 448, height: 400 } },
+      [count]: result.style[count],
+      [`${count}/::before`]: { style: pseudo },
+    };
+    delete result.style[count].style.color;
+    return result;
+  };
+  assert.deepEqual(compare(withParent('rgb(0, 0, 0)', {}), withParent('rgb(0, 0, 0)', {})).style, []);
+  assert.deepEqual(compare(withParent('rgb(0, 0, 0)', {}), withParent('rgb(9, 9, 9)', { content: '"x"' })).style, [
+    { path: `${main}.style.color`, expected: 'rgb(0, 0, 0)', actual: 'rgb(9, 9, 9)' },
+    { path: `${count}.style.color`, expected: 'rgb(0, 0, 0)', actual: 'rgb(9, 9, 9)' },
+    { path: `${count}/::before.style.color`, expected: 'rgb(0, 0, 0)', actual: 'rgb(9, 9, 9)' },
+    { path: `${count}/::before.style.content`, expected: undefined, actual: '"x"' },
+  ]);
+  assert.deepEqual(
+    compare(withParent('rgb(0, 0, 0)', {}), withParent('rgb(0, 0, 0)', { display: 'block' })).style,
+    [{ path: `${count}/::before.style.display`, expected: 'flex', actual: 'block' }],
+    'a value that only one side lists is compared with the inherited one',
   );
 });
 
@@ -237,7 +266,7 @@ test('the summary names the failing layer, the step, the first differing path an
     port.effects.focus = 'body[1]';
     delete port.effects.storage.tasks;
     port.style[count].style['margin-left'] = '3px';
-    port.style[count].box.x = 291;
+    port.style[count].box!.x = 291;
   });
   assert.equal(failed.result, 'fail');
   assert.equal(failed.cases[0].steps[0].layers.style.differences, 2);

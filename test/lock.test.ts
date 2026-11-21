@@ -65,6 +65,14 @@ test('a missing file, an added file and a missing lock are detected', async () =
   ]);
 });
 
+test('a lock in another format is refused', async () => {
+  const problems = await problemsAfter(async (directory) => {
+    const lock = JSON.parse(await readFile(join(directory, 'lock.json'), 'utf8'));
+    await writeFile(join(directory, 'lock.json'), JSON.stringify({ ...lock, format: 'angular-anything/lock@1' }));
+  });
+  assert.deepEqual(problems, ['lock.json is not in the format angular-anything/lock@0']);
+});
+
 test('editing a file and its hash in the lock breaks the root hash', async () => {
   const problems = await problemsAfter(async (directory) => {
     await writeFile(join(directory, '01.json'), '{"dom":{"tag":"main"}}\n');

@@ -1,15 +1,16 @@
-import type { Box, DomNode } from './page.ts';
+import type { DomNode, Style } from './page.ts';
 
 export type Observation = {
   accessibility: { tree: unknown[]; attributes: Record<string, Record<string, string>> };
   dom: DomNode;
-  style: Record<string, { style: Record<string, string>; box: Box }>;
+  style: Style;
   events: { name: string; payload: unknown }[];
   effects: {
     requests: { method: string; url: string; body: unknown }[];
     gets: string[];
     storage: Record<string, string>;
     url: string;
+    title: string;
     focus: string | null;
   };
 };
@@ -77,12 +78,22 @@ function withoutChildren(node: Tree | undefined): unknown {
   return fields;
 }
 
+// Gives every element all of its longhands again: the ones it lists and the ones of its parent.
+function inheritStyle(style: Style): Style {
+  const full: Style = {};
+  for (const [path, own] of Object.entries(style)) {
+    const parent = full[path.slice(0, path.lastIndexOf('/'))];
+    full[path] = { ...own, style: { ...parent?.style, ...own.style } };
+  }
+  return full;
+}
+
 export function compare(expected: Observation, actual: Observation): Record<Layer, Difference[]> {
   const result: Record<Layer, Difference[]> = { accessibility: [], dom: [], style: [], events: [], effects: [] };
   diffTree(expected.accessibility.tree as Tree[], actual.accessibility.tree as Tree[], 'tree', 'role', result.accessibility);
   diffValue(expected.accessibility.attributes, actual.accessibility.attributes, 'attributes', 0, result.accessibility);
   diffTree([expected.dom], [actual.dom], '', 'tag', result.dom);
-  diffValue(expected.style, actual.style, '', GEOMETRY_TOLERANCE_PX, result.style);
+  diffValue(inheritStyle(expected.style), inheritStyle(actual.style), '', GEOMETRY_TOLERANCE_PX, result.style);
   diffValue(expected.events, actual.events, '', 0, result.events);
   diffValue(expected.effects, actual.effects, '', 0, result.effects);
   return result;

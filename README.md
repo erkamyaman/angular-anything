@@ -43,7 +43,20 @@ pnpm aa gate fixture --source react --url 'http://localhost:4104/?bug=aria'   # 
 
 The sources are `react`, `vue` and `angularjs`. The seeded bugs are `double-event`, `missing-class`, `aria`, `text`, `request`, `storage`, `focus` and `style`.
 
-`record` exits 0 when every case was recorded. `gate` and `replay` exit 0 when every step of every case matches the recording, 1 on a mismatch or a refused recording, and 2 on a wrong command line. Both print a summary and write `reports/<source>/report.json`.
+`record` exits 0 when every case was recorded. `gate` and `replay` exit 0 when every step of every case matches the recording, 1 on a mismatch or a refused recording, and 2 on a wrong command line. Both print a summary and write it to `reports/<source>/summary.txt` next to `reports/<source>/report.json`. `gate` also exits 1 when `recordings/<source>` holds a recording of the suite whose case is gone.
+
+## What is compared
+
+After each step the page settles and one observation is captured:
+
+- the accessibility snapshot and the literal `aria-*`, `role`, `tabindex` and `required` attributes
+- the DOM from the `html` element down, without `head`, `script`, `style` and `link`, and without the marks a framework leaves where that framework is proven for the element
+- every computed CSS longhand and the border box of each element, and of each `::before` and `::after` that has content
+- the events sent through `window.__aa.emit`
+- the requests, `localStorage`, the URL, the document title and the focused element
+- a screenshot, which is reported and never fails the gate
+
+In a recorded observation an element lists only the longhands whose value differs from its parent element. The `html` element lists all of them.
 
 ## Notes
 

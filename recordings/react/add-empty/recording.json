@@ -5,11 +5,5 @@
   "source": "react",
   "url": "http://localhost:4101/",
   "steps": 4,
-  "masked": [
-    {
-      "step": 2,
-      "layer": "screenshot",
-      "path": ""
-    }
-  ]
+  "masked": []
 }

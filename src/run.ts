@@ -60,14 +60,17 @@ async function observe(page: Page, base: URL, log: Log) {
       ].sort(),
       storage: captured.storage,
       url: (pageUrl.origin === base.origin ? '' : pageUrl.origin) + pageUrl.pathname + pageUrl.search + pageUrl.hash,
+      title: captured.title,
       focus: captured.focus,
     },
   };
   return { observation, mutations: captured.mutations, seen: { events: events.length, requests: requests.length } };
 }
 
-const nextFrameAndTimer = (page: Page) =>
-  page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0))));
+async function quietPeriod(page: Page): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, QUIET_MS));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0))));
+}
 
 // Returns the observation once two observations in a row are identical and, from the start of the first to the
 // end of the second, no request was in flight, started or ended and the DOM did not mutate.
@@ -99,8 +102,20 @@ async function settle(page: Page, base: URL, log: Log) {
       );
     }
     previous = current;
-    await new Promise((resolve) => setTimeout(resolve, QUIET_MS));
-    await nextFrameAndTimer(page);
+    await quietPeriod(page);
+  }
+}
+
+// Returns the screenshot once two in a row, one quiet period apart, are identical.
+// After SETTLE_TIMEOUT_MS it returns the last one.
+async function stableScreenshot(page: Page): Promise<Buffer> {
+  const deadline = Date.now() + SETTLE_TIMEOUT_MS;
+  let previous = await page.screenshot();
+  for (;;) {
+    await quietPeriod(page);
+    const current = await page.screenshot();
+    if (current.equals(previous) || Date.now() > deadline) return current;
+    previous = current;
   }
 }
 
@@ -185,7 +200,7 @@ export async function runCase(browser: Browser, testCase: Case, base: URL): Prom
         log.requests.splice(0, settled.seen.requests);
         steps.push({
           observation: settled.observation,
-          screenshot: await page.screenshot(),
+          screenshot: await stableScreenshot(page),
           settleMs,
           captures: settled.captures,
         });
