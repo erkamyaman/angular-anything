@@ -42,7 +42,7 @@ function world(start: Partial<World>): { world: World; page: FramePage; requests
   const page: FramePage = {
     async rest() {
       world.calls.push('rest');
-      return world.moved.shift() ?? false;
+      return world.moved.shift() ? 'the text' : '';
     },
     async tick() {
       world.calls.push('tick');
@@ -58,6 +58,7 @@ function world(start: Partial<World>): { world: World; page: FramePage; requests
   const requests: Requests = {
     inFlight: () => world.inFlight,
     events: () => world.requestEvents,
+    first: () => 'GET /answer',
     async idle() {
       world.calls.push('idle');
       world.onAnswer(world);
@@ -141,17 +142,59 @@ test('an advance waits for a request before each frame', async () => {
   assert.equal(state.time, 32);
 });
 
-test('the page rests until nothing moves in two rounds in a row, for ten rounds at most', async () => {
+test('the page rests until nothing moves in two rounds in a row', async () => {
   const twice = world({ moved: [true, false, true] });
   await frame(twice.page, twice.requests);
   assert.deepEqual(twice.world.calls, ['rest', 'rest', 'rest', 'rest', 'rest', 'tick']);
 
-  const restless = world({ moved: Array(50).fill(true) });
-  await frame(restless.page, restless.requests);
-  assert.deepEqual(restless.world.calls, [...Array(10).fill('rest'), 'tick']);
+  const long = world({ moved: Array(98).fill(true) });
+  await frame(long.page, long.requests);
+  assert.deepEqual(long.world.calls, [...Array(100).fill('rest'), 'tick']);
 });
 
-test('a page that changes in every frame fails the step at the limit of frames', async () => {
+test('a page that moves in every round fails the step after 100 rounds, without a frame', async () => {
+  const restless = world({ moved: Array(500).fill(true) });
+  await assert.rejects(
+    frame(restless.page, restless.requests),
+    /^Error: the page did not come to rest in 100 rounds, the last to move: the text$/,
+  );
+  assert.deepEqual(restless.world.calls, Array(100).fill('rest'));
+  assert.equal(restless.world.time, 0);
+});
+
+test('the page rests again after every batch of answers, before the clock moves', async () => {
+  let answers = 0;
+  const { world: state, page, requests } = world({
+    inFlight: 1,
+    requestEvents: 1,
+    onAnswer: (world) => {
+      answer(world);
+      if (++answers < 4) send(world);
+    },
+  });
+  await frame(page, requests);
+  assert.deepEqual(state.calls, [...Array(4).fill(['rest', 'rest', 'idle']).flat(), 'rest', 'rest', 'tick']);
+  assert.equal(state.ticksInFlight, 0);
+});
+
+test('a page that asks again after every answer fails the step after 100 batches, and the request is named', async () => {
+  const { world: state, page, requests } = world({
+    inFlight: 1,
+    requestEvents: 1,
+    onAnswer: (world) => {
+      answer(world);
+      send(world);
+    },
+  });
+  await assert.rejects(
+    frame(page, requests),
+    /^Error: 1 requests in flight after 100 batches of answers, the first: GET \/answer$/,
+  );
+  assert.equal(state.calls.filter((call) => call === 'idle').length, 100);
+  assert.equal(state.time, 0);
+});
+
+test('a page that changes in every frame fails the step at the limit of frames', { timeout: 10_000 }, async () => {
   const { world: state, page, requests } = world({
     onTick: (world) => {
       world.text = String(world.time);
@@ -164,10 +207,12 @@ test('a page that changes in every frame fails the step at the limit of frames',
   assert.equal(state.time, 5 * 16);
 });
 
-test('a request that is still in flight after the wait keeps the step from settling', async () => {
-  const { page, requests } = world({ inFlight: 1, requestEvents: 1 });
+test('a request that is still in flight after every wait fails the step before any observation', { timeout: 10_000 }, async () => {
+  const { world: state, page, requests } = world({ inFlight: 1, requestEvents: 1 });
   await assert.rejects(
     settle(page, requests, 3),
-    /^Error: never settled in 3 frames: 1 requests in flight, layers still changing: none$/,
+    /^Error: 1 requests in flight after 100 batches of answers, the first: GET \/answer$/,
   );
+  assert.equal(state.calls.includes('observe'), false);
+  assert.equal(state.time, 0);
 });

@@ -59,8 +59,9 @@ function stepProblem(step: unknown): string | undefined {
       return undefined;
     case 'advance':
       if ('ms' in step) {
-        const frames = Math.ceil(Number(step.ms) / FRAME_MS);
-        return `takes "frames" and no "ms": one frame is ${FRAME_MS} ms, so ${step.ms} ms are ${frames} frames`;
+        const refusal = `takes "frames" and no "ms": one frame is ${FRAME_MS} ms`;
+        if (typeof step.ms !== 'number' || !(step.ms > 0)) return refusal;
+        return `${refusal}, so ${step.ms} ms are ${Math.ceil(step.ms / FRAME_MS)} frames`;
       }
       return Number.isInteger(step.frames) && (step.frames as number) > 0
         ? undefined

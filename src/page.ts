@@ -31,8 +31,11 @@ type AngularJsInjector = {
 };
 type Instrumented = {
   __aaEmit(json: string): void;
+  __aaSync?(request: string, waiting: boolean): void;
   __aaMutations: number;
   __aaRested?: number;
+  __aaShadows: WeakMap<Element, ShadowRoot>;
+  __aaHeld: WeakSet<SVGSVGElement>;
   __aaFrame(): Promise<void>;
   angular?: AngularJs;
 };
@@ -57,6 +60,46 @@ export function initPage(): void {
   }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
   const requestFrame = window.requestAnimationFrame.bind(window);
   page.__aaFrame = () => new Promise((resolve) => requestFrame(() => resolve()));
+
+  page.__aaHeld = new WeakSet();
+  page.__aaShadows = new WeakMap();
+  const attachShadow = Element.prototype.attachShadow;
+  Element.prototype.attachShadow = function (this: Element, init: ShadowRootInit) {
+    const root = attachShadow.call(this, init);
+    page.__aaShadows.set(this, root);
+    return root;
+  };
+
+  const { open, send } = XMLHttpRequest.prototype;
+  const synchronous = new WeakMap<XMLHttpRequest, string>();
+  XMLHttpRequest.prototype.open = function (this: XMLHttpRequest, ...args: unknown[]) {
+    const [method, url, async] = args;
+    if (args.length > 2 && !async) {
+      const target = new URL(String(url), document.baseURI);
+      target.hash = '';
+      synchronous.set(this, `${String(method).toUpperCase()} ${target.href}`);
+    } else {
+      synchronous.delete(this);
+    }
+    return (open as (...args: unknown[]) => void).apply(this, args);
+  };
+  XMLHttpRequest.prototype.send = function (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
+    const request = synchronous.get(this);
+    if (request === undefined) return send.call(this, body);
+    page.__aaSync?.(request, true);
+    try {
+      return send.call(this, body);
+    } finally {
+      page.__aaSync?.(request, false);
+    }
+  };
+
+  const fetch = window.fetch;
+  window.fetch = function (this: unknown, ...args: Parameters<typeof fetch>) {
+    const answer = fetch.apply(this, args);
+    answer.then((response) => response.clone().arrayBuffer()).catch(() => {});
+    return answer;
+  } as typeof fetch;
 }
 
 export function clampIntervals(): void {
@@ -69,7 +112,11 @@ export function browserFrame(): Promise<void> {
   return (window as unknown as Instrumented).__aaFrame();
 }
 
-export async function restPage(): Promise<boolean> {
+export function adoptPage(...roots: ShadowRoot[]): void {
+  for (const root of roots) (window as unknown as Instrumented).__aaShadows.set(root.host, root);
+}
+
+export async function restPage(): Promise<string> {
   const page = window as unknown as Instrumented;
   const tasks = async () => {
     for (let hop = 0; hop < 2; hop++) {
@@ -81,16 +128,35 @@ export async function restPage(): Promise<boolean> {
     }
   };
   await tasks();
-  let moved = page.__aaMutations !== page.__aaRested;
+  let moved = page.__aaMutations === page.__aaRested ? '' : 'the DOM';
   page.__aaRested = page.__aaMutations;
+  const unended = (element: SVGAnimationElement) => {
+    if (element.getAttribute('repeatCount') === 'indefinite' || element.getAttribute('repeatDur') === 'indefinite') {
+      return false;
+    }
+    try {
+      element.getSimpleDuration();
+      element.getStartTime();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const timelines = new Map<SVGSVGElement, boolean>();
   const roots: (Document | ShadowRoot)[] = [document];
   for (const root of roots) {
     for (const element of root.querySelectorAll('*')) {
-      if (element.shadowRoot) roots.push(element.shadowRoot);
+      const shadow = element.shadowRoot ?? page.__aaShadows.get(element);
+      if (shadow) roots.push(shadow);
+      if (element instanceof SVGAnimationElement && element.ownerSVGElement) {
+        const svg = element.ownerSVGElement;
+        timelines.set(svg, timelines.get(svg) || unended(element));
+      }
     }
     for (const animation of root.getAnimations()) {
-      if (animation.playState !== 'running') continue;
-      moved = true;
+      if (animation.playState !== 'running' || animation.playbackRate === 0) continue;
+      if (!(animation.timeline instanceof DocumentTimeline)) continue;
+      moved = 'an animation';
       if (animation.effect?.getComputedTiming().endTime === Infinity) {
         animation.pause();
         animation.currentTime = 0;
@@ -98,6 +164,13 @@ export async function restPage(): Promise<boolean> {
         animation.finish();
       }
     }
+  }
+  for (const [svg, running] of timelines) {
+    if (svg.animationsPaused() && !(running && page.__aaHeld.has(svg))) continue;
+    svg.pauseAnimations();
+    svg.setCurrentTime((Math.floor(svg.getCurrentTime() / 3600) + 1) * 3600);
+    page.__aaHeld.add(svg);
+    moved = 'an SVG animation';
   }
   if (moved) {
     await page.__aaFrame();

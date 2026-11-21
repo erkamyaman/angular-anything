@@ -68,6 +68,10 @@ test('a broken case is rejected with the reason', () => {
       (data) => (data.steps[7] = { action: 'advance', ms: 2000, frames: 125 }),
       /step 8 takes "frames" and no "ms": one frame is 16 ms, so 2000 ms are 125 frames/,
     ],
+    [(data) => (data.steps[7] = { action: 'advance', ms: 0 }), /step 8 takes "frames" and no "ms": one frame is 16 ms$/],
+    [(data) => (data.steps[7] = { action: 'advance', ms: -5 }), /step 8 takes "frames" and no "ms": one frame is 16 ms$/],
+    [(data) => (data.steps[7] = { action: 'advance', ms: 'abc' }), /step 8 takes "frames" and no "ms": one frame is 16 ms$/],
+    [(data) => (data.steps[7] = { action: 'advance', ms: null }), /step 8 takes "frames" and no "ms": one frame is 16 ms$/],
   ];
   for (const [change, message] of broken) assert.throws(() => parse(change), message);
   assert.throws(() => parseCase('[]', 'every-step'), /the case is not an object/);
