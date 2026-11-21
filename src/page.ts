@@ -17,7 +17,6 @@ export type PageCapture = {
   storage: Record<string, string>;
   href: string;
   title: string;
-  mutations: number;
 };
 
 type AngularJs = {
@@ -30,7 +29,13 @@ type AngularJsInjector = {
     $$bindings?: Record<string, Record<string, { attrName: string; mode: string }> | null>;
   }[];
 };
-type Instrumented = { __aaEmit(json: string): void; __aaMutations?: number; angular?: AngularJs };
+type Instrumented = {
+  __aaEmit(json: string): void;
+  __aaMutations: number;
+  __aaRested?: number;
+  __aaFrame(): Promise<void>;
+  angular?: AngularJs;
+};
 
 // Runs in the page before any page script. Defines window.__aa.emit and counts DOM mutations.
 export function initPage(): void {
@@ -48,8 +53,57 @@ export function initPage(): void {
   };
   page.__aaMutations = 0;
   new MutationObserver((records) => {
-    page.__aaMutations! += records.length;
+    page.__aaMutations += records.length;
   }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  const requestFrame = window.requestAnimationFrame.bind(window);
+  page.__aaFrame = () => new Promise((resolve) => requestFrame(() => resolve()));
+}
+
+export function clampIntervals(): void {
+  const setInterval = window.setInterval;
+  window.setInterval = ((handler: TimerHandler, delay?: number, ...rest: unknown[]) =>
+    setInterval(handler, Math.max(1, Number(delay) || 0), ...rest)) as typeof window.setInterval;
+}
+
+export function browserFrame(): Promise<void> {
+  return (window as unknown as Instrumented).__aaFrame();
+}
+
+export async function restPage(): Promise<boolean> {
+  const page = window as unknown as Instrumented;
+  const tasks = async () => {
+    for (let hop = 0; hop < 2; hop++) {
+      await new Promise<void>((resolve) => {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = () => resolve();
+        channel.port2.postMessage(null);
+      });
+    }
+  };
+  await tasks();
+  let moved = page.__aaMutations !== page.__aaRested;
+  page.__aaRested = page.__aaMutations;
+  const roots: (Document | ShadowRoot)[] = [document];
+  for (const root of roots) {
+    for (const element of root.querySelectorAll('*')) {
+      if (element.shadowRoot) roots.push(element.shadowRoot);
+    }
+    for (const animation of root.getAnimations()) {
+      if (animation.playState !== 'running') continue;
+      moved = true;
+      if (animation.effect?.getComputedTiming().endTime === Infinity) {
+        animation.pause();
+        animation.currentTime = 0;
+      } else {
+        animation.finish();
+      }
+    }
+  }
+  if (moved) {
+    await page.__aaFrame();
+    await tasks();
+  }
+  return moved;
 }
 
 // Runs in the page, so it must not use anything from outside its own body.
@@ -237,6 +291,5 @@ export function capturePage(): PageCapture {
     storage: localStorageItems(),
     href: location.href,
     title: document.title,
-    mutations: page.__aaMutations ?? 0,
   };
 }

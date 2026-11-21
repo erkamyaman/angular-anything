@@ -1,5 +1,5 @@
 {
-  "format": "angular-anything/case@0",
+  "format": "angular-anything/case@1",
   "id": "delete-task",
   "description": "Delete both tasks: focus moves to the New task input",
   "viewport": { "width": 1024, "height": 768 },

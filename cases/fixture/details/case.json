@@ -1,5 +1,5 @@
 {
-  "format": "angular-anything/case@0",
+  "format": "angular-anything/case@1",
   "id": "details",
   "description": "Open and close the Details section",
   "viewport": { "width": 1024, "height": 768 },

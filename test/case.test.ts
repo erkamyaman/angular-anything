@@ -5,7 +5,7 @@ import { describeStep, loadSuite, parseCase, UsageError } from '../src/case.ts';
 
 const target = { role: 'textbox', name: 'New task' };
 const valid = {
-  format: 'angular-anything/case@0',
+  format: 'angular-anything/case@1',
   id: 'every-step',
   description: 'One step of every kind',
   viewport: { width: 1024, height: 768 },
@@ -17,7 +17,7 @@ const valid = {
     { action: 'check', target: { role: 'checkbox', name: 'Buy milk' } },
     { action: 'uncheck', target: { role: 'checkbox', name: 'Buy milk' } },
     { action: 'reload' },
-    { action: 'advance', ms: 2500 },
+    { action: 'advance', frames: 150 },
   ],
 };
 
@@ -38,13 +38,13 @@ test('a case with every kind of step is accepted and described', () => {
     'check checkbox "Buy milk"',
     'uncheck checkbox "Buy milk"',
     'reload',
-    'advance 2500 ms',
+    'advance 150 frames',
   ]);
 });
 
 test('a broken case is rejected with the reason', () => {
   const broken: [(data: Record<string, any>) => void, RegExp][] = [
-    [(data) => (data.format = 'angular-anything/case@1'), /"format" must be "angular-anything\/case@0"/],
+    [(data) => (data.format = 'angular-anything/case@0'), /"format" must be "angular-anything\/case@1"/],
     [(data) => (data.id = 'other'), /"id" must be "every-step", the name of its folder/],
     [(data) => delete data.viewport, /"viewport" needs a "width" and a "height"/],
     [(data) => (data.viewport.width = 0), /"viewport" needs a "width" and a "height"/],
@@ -57,7 +57,17 @@ test('a broken case is rejected with the reason', () => {
     [(data) => delete data.steps[2].key, /step 3 needs a "key"/],
     [(data) => delete data.steps[2].target, /step 3 needs a "target" with "role" and "name"/],
     [(data) => (data.steps[3].action = 'hover'), /step 4 has the unknown action "hover"/],
-    [(data) => (data.steps[7].ms = 0), /step 8 needs "ms" above 0/],
+    [(data) => (data.steps[7].frames = 0), /step 8 needs "frames", a whole number above 0/],
+    [(data) => (data.steps[7].frames = 1.5), /step 8 needs "frames", a whole number above 0/],
+    [(data) => delete data.steps[7].frames, /step 8 needs "frames", a whole number above 0/],
+    [
+      (data) => (data.steps[7] = { action: 'advance', ms: 2500 }),
+      /step 8 takes "frames" and no "ms": one frame is 16 ms, so 2500 ms are 157 frames/,
+    ],
+    [
+      (data) => (data.steps[7] = { action: 'advance', ms: 2000, frames: 125 }),
+      /step 8 takes "frames" and no "ms": one frame is 16 ms, so 2000 ms are 125 frames/,
+    ],
   ];
   for (const [change, message] of broken) assert.throws(() => parse(change), message);
   assert.throws(() => parseCase('[]', 'every-step'), /the case is not an object/);

@@ -1,5 +1,5 @@
 {
-  "format": "angular-anything/case@0",
+  "format": "angular-anything/case@1",
   "id": "load-suggestions",
   "description": "Load the suggestions from the API",
   "viewport": { "width": 1024, "height": 768 },

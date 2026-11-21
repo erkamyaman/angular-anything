@@ -1,13 +1,13 @@
 {
-  "format": "angular-anything/case@0",
+  "format": "angular-anything/case@1",
   "id": "add-task",
-  "description": "Add a task: the toast shows, stays for 500 ms and is gone after 2000 ms more",
+  "description": "Add a task: the toast shows, stays for 32 frames and is gone after 125 frames more",
   "viewport": { "width": 1024, "height": 768 },
   "steps": [
     { "action": "goto", "path": "/" },
     { "action": "fill", "target": { "role": "textbox", "name": "New task" }, "value": "Call mom" },
     { "action": "click", "target": { "role": "button", "name": "Add" } },
-    { "action": "advance", "ms": 500 },
-    { "action": "advance", "ms": 2000 }
+    { "action": "advance", "frames": 32 },
+    { "action": "advance", "frames": 125 }
   ]
 }

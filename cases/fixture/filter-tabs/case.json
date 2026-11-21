@@ -1,5 +1,5 @@
 {
-  "format": "angular-anything/case@0",
+  "format": "angular-anything/case@1",
   "id": "filter-tabs",
   "description": "Show the active tasks, the done tasks and all tasks again",
   "viewport": { "width": 1024, "height": 768 },

@@ -1,5 +1,5 @@
 {
-  "format": "angular-anything/case@0",
+  "format": "angular-anything/case@1",
   "id": "initial-render",
   "description": "The first render with the two default tasks",
   "viewport": { "width": 1024, "height": 768 },

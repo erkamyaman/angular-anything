@@ -1,5 +1,5 @@
 {
-  "format": "angular-anything/case@0",
+  "format": "angular-anything/case@1",
   "id": "add-empty",
   "description": "Add with an empty title and with a title of spaces: nothing is added",
   "viewport": { "width": 1024, "height": 768 },

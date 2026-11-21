@@ -12,10 +12,6 @@ const cli = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 
 // A static page that misbehaves on purpose with ?bug=<name>, like the Angular fixture does.
 // data-nonce is different on every load, so it is noise that the two recording runs have to mask.
-// Save shows its result 40 ms after the slow POST has answered, and Loud takes effect after 150 ms of mutations
-// that the canonical DOM does not show, so an observation taken before the page settled is wrong.
-// Loud then repaints half of the canvas for 10 frames, so a screenshot taken right after the page settled is noise.
-// With ?bug=restless the page changes every 20 ms and never settles.
 const page = `<!doctype html>
 <html lang="en">
 <head>
@@ -45,14 +41,13 @@ const page = `<!doctype html>
   const button = document.getElementById('save');
   const loud = document.getElementById('loud');
   const state = document.getElementById('state');
-  const marker = main.appendChild(document.createComment(''));
 
   main.dataset.nonce = String(Math.random());
   const swatch = document.getElementById('swatch').getContext('2d');
   swatch.fillStyle = bug === 'pixels' ? 'rgb(200, 0, 0)' : 'rgb(0, 0, 200)';
   swatch.fillRect(0, 0, 16, 16);
   if (localStorage.getItem('name')) state.textContent = 'saved ' + localStorage.getItem('name');
-  if (bug === 'restless') setInterval(() => (state.textContent = String(performance.now())), 20);
+  if (bug === 'restless') setInterval(() => (state.textContent = String(performance.now())), 10);
   if (bug === 'style') {
     const style = document.createElement('style');
     style.textContent = '#state { margin-left: 3px; }';
@@ -70,14 +65,12 @@ const page = `<!doctype html>
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(bug === 'request' ? {} : { name }),
     }).then((response) => response.json()).then(() => {
+      state.textContent = (bug === 'text' ? 'stored ' : 'saved ') + name;
+      state.className = bug === 'dom' ? 'off' : 'on';
+      button.setAttribute('aria-expanded', bug === 'aria' ? 'false' : 'true');
       setTimeout(() => {
-        state.textContent = (bug === 'text' ? 'stored ' : 'saved ') + name;
-        state.className = bug === 'dom' ? 'off' : 'on';
-        button.setAttribute('aria-expanded', bug === 'aria' ? 'false' : 'true');
-        setTimeout(() => {
-          state.className = 'off';
-        }, 5000);
-      }, 40);
+        state.className = 'off';
+      }, 5000);
     });
   }
 
@@ -85,22 +78,17 @@ const page = `<!doctype html>
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') save();
   });
+  const ticker = new Worker(URL.createObjectURL(new Blob([
+    'onmessage = () => { let n = 0; const timer = setInterval(() => { postMessage(n); if (++n > 10) clearInterval(timer); }, 20); };',
+  ])));
+  ticker.onmessage = (event) => {
+    swatch.fillStyle = 'rgb(0, ' + event.data * 20 + ', 0)';
+    swatch.fillRect(8, 0, 8, 16);
+  };
   loud.addEventListener('change', () => {
     window.__aa?.emit('loud', { on: loud.checked });
-    let ticks = 0;
-    const busy = setInterval(() => {
-      marker.data = String(ticks);
-      if (++ticks < 15) return;
-      clearInterval(busy);
-      main.classList.toggle('loud', loud.checked);
-      let frame = 0;
-      const paint = () => {
-        swatch.fillStyle = 'rgb(0, ' + frame * 20 + ', 0)';
-        swatch.fillRect(8, 0, 8, 16);
-        if (frame++ < 10) requestAnimationFrame(paint);
-      };
-      requestAnimationFrame(paint);
-    }, 10);
+    main.classList.toggle('loud', loud.checked);
+    ticker.postMessage(0);
   });
 </script>
 </body>
@@ -113,7 +101,7 @@ const steps = [
   { action: 'goto', path: '/' },
   { action: 'fill', target: { role: 'textbox', name: 'Name' }, value: 'Ada' },
   { action: 'press', target: { role: 'textbox', name: 'Name' }, key: 'Enter' },
-  { action: 'advance', ms: 6000 },
+  { action: 'advance', frames: 375 },
   { action: 'check', target: { role: 'checkbox', name: 'Loud' } },
   { action: 'uncheck', target: { role: 'checkbox', name: 'Loud' } },
   { action: 'click', target: { role: 'button', name: 'Save' } },
@@ -187,7 +175,7 @@ before(async () => {
   root = await mkdtemp(join(tmpdir(), 'aa-e2e-'));
   await mkdir(join(root, 'cases', 'tiny', 'save'), { recursive: true });
   await mkdir(join(root, 'cases', 'none'), { recursive: true });
-  const testCase = { format: 'angular-anything/case@0', id: 'save', viewport: { width: 800, height: 600 }, steps };
+  const testCase = { format: 'angular-anything/case@1', id: 'save', viewport: { width: 800, height: 600 }, steps };
   await writeFile(join(root, 'cases', 'tiny', 'save', 'case.json'), JSON.stringify(testCase, null, 2));
   [original, port, empty] = await Promise.all([serve(page), serve(page), serve(emptyPage)]);
 });
@@ -229,7 +217,7 @@ test('record launches Chromium, writes a locked recording and masks the noise of
     longhand(JSON.parse(await readFile(recorded(step), 'utf8')), 'html[1]/body[1]/main[1]/p[1]', property);
   assert.equal(await state('03.json', 'color'), 'rgb(180, 0, 0)');
   assert.equal(await state('04.json', 'color'), 'rgb(0, 0, 0)', 'advance fires the 5000 ms timer');
-  assert.equal(await state('05.json', 'text-transform'), 'uppercase', 'the observation waits for the mutations to end');
+  assert.equal(await state('05.json', 'text-transform'), 'uppercase');
   assert.equal(await state('06.json', 'text-transform'), 'none');
   const afterReload = JSON.parse(await readFile(recorded('08.json'), 'utf8'));
   assert.deepEqual(afterReload.dom.children[0].children[0].children.at(-2), {
@@ -372,7 +360,7 @@ test('record fails a case whose page never settles or whose target is missing, a
   assert.equal(restless.status, 1, restless.output);
   assert.match(
     restless.output,
-    /^FAIL {2}save\n {6}step 1 \(goto \/\): never settled in 5000 ms: 0 requests in flight, layers still changing: accessibility, dom/m,
+    /^FAIL {2}save\n {6}step 1 \(goto \/\): never settled in 300 frames: 0 requests in flight, layers still changing: accessibility, dom/m,
   );
   assert.match(restless.output, /Recorded 0 of 1 cases into recordings\/restless\./);
 

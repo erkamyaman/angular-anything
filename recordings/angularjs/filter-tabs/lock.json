@@ -2,7 +2,7 @@
   "format": "angular-anything/lock@0",
   "playwright": "1.65.1",
   "browser": "chromium 159.0.8154.6",
-  "case": "aeee78b381615a8fe8b1732487d160159785b65cc9ade5cec6f9066972ceab33",
+  "case": "6b685ca7c4722328a18d665ddf6f12ed3903656d1703a9e9656797ee45558994",
   "files": {
     "01.json": "3b2d58e996c3ea322ebef8fa7d77e373c7afdcf2d65d4faaaa90430ce2b6ecfa",
     "01.png": "b627e0829e671047d756b4d2350c158f8d0a93d42891472728e63be6774c890d",
@@ -14,5 +14,5 @@
     "04.png": "17b0258f89a6659f8e96eac646b912c9c3404209d2f292a135cd3efb6664ae07",
     "recording.json": "7e7cc7a22dfc209aba4ce983f072852978696d5bb384972352f036311fcb9607"
   },
-  "root": "15e3d84a2dd7235a3304237b0b94b96da0773bf76c6503830d8aa80b6fcc1ded"
+  "root": "bc58a020d5d9f333b13349fb7316da13df659ca7031edd2d281bb8fd1a94eb85"
 }

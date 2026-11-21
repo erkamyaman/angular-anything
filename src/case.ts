@@ -2,7 +2,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { sha256 } from './lock.ts';
 
-export const CASE_FORMAT = 'angular-anything/case@0';
+export const CASE_FORMAT = 'angular-anything/case@1';
+export const FRAME_MS = 16;
 
 export type Target = { role: string; name: string };
 
@@ -12,7 +13,7 @@ export type Step =
   | { action: 'fill'; target: Target; value: string }
   | { action: 'press'; target: Target; key: string }
   | { action: 'reload' }
-  | { action: 'advance'; ms: number };
+  | { action: 'advance'; frames: number };
 
 export type Case = {
   format: typeof CASE_FORMAT;
@@ -57,7 +58,13 @@ function stepProblem(step: unknown): string | undefined {
     case 'reload':
       return undefined;
     case 'advance':
-      return typeof step.ms === 'number' && step.ms > 0 ? undefined : 'needs "ms" above 0';
+      if ('ms' in step) {
+        const frames = Math.ceil(Number(step.ms) / FRAME_MS);
+        return `takes "frames" and no "ms": one frame is ${FRAME_MS} ms, so ${step.ms} ms are ${frames} frames`;
+      }
+      return Number.isInteger(step.frames) && (step.frames as number) > 0
+        ? undefined
+        : 'needs "frames", a whole number above 0';
     default:
       return `has the unknown action ${JSON.stringify(step.action)}`;
   }
@@ -111,7 +118,7 @@ export function describeStep(step: Step): string {
     case 'reload':
       return 'reload';
     case 'advance':
-      return `advance ${step.ms} ms`;
+      return `advance ${step.frames} frames`;
     default:
       return `${step.action} ${describeTarget(step.target)}`;
   }

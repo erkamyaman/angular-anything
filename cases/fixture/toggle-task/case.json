@@ -1,5 +1,5 @@
 {
-  "format": "angular-anything/case@0",
+  "format": "angular-anything/case@1",
   "id": "toggle-task",
   "description": "Mark the active task as done, then mark the done task as active",
   "viewport": { "width": 1024, "height": 768 },
