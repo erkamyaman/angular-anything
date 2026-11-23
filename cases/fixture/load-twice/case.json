@@ -1,0 +1,11 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "load-twice",
+  "description": "Loading the suggestions twice",
+  "viewport": { "width": 1024, "height": 768 },
+  "steps": [
+    { "action": "goto", "path": "/" },
+    { "action": "click", "target": { "role": "button", "name": "Load suggestions" } },
+    { "action": "click", "target": { "role": "button", "name": "Load suggestions" } }
+  ]
+}

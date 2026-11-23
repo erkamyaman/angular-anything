@@ -1,9 +1,15 @@
 {
-  "format": "angular-anything/recording@0",
+  "format": "angular-anything/recording@2",
   "suite": "fixture",
   "case": "filter-tabs",
   "source": "angularjs",
   "url": "http://localhost:4103/",
   "steps": 4,
-  "masked": []
+  "frames": [
+    4,
+    4,
+    4,
+    4
+  ],
+  "screenshotNoise": []
 }

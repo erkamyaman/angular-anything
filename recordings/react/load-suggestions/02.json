@@ -2449,11 +2449,24 @@
   "effects": {
     "requests": [],
     "gets": [
-      "/api/suggestions"
+      {
+        "path": [
+          "api",
+          "suggestions"
+        ],
+        "query": {}
+      }
     ],
     "storage": {},
-    "url": "/",
+    "url": {
+      "path": [
+        ""
+      ],
+      "query": {},
+      "fragment": ""
+    },
     "title": "Tasks",
-    "focus": "html[1]/body[1]"
+    "focus": "html[1]/body[1]",
+    "popups": []
   }
 }

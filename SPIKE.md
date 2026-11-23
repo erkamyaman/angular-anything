@@ -70,7 +70,7 @@ Behavior:
 - Details toggles `aria-expanded` and the `hidden` attribute of the section.
 - Load suggestions: the button gets `disabled` and `aria-busy="true"` while `GET /api/suggestions` is in flight, then the list shows one `<li>` per suggestion.
 - Every change to the task list is written to `localStorage.tasks` as JSON (`[{"id":1,"title":"Buy milk","done":false}, ...]`).
-- The task row is its own component in every implementation (React component, Vue component, AngularJS attribute directive on the `<li>`, Angular attribute-selector component on the `<li>`).
+- The task row is its own component in every implementation (React component, Vue component, AngularJS attribute directive on the `<li>`, Angular component on the `<li>` with the selector `li.task`).
 
 Events: each implementation reports its component outputs through one shared hook, and only through it:
 

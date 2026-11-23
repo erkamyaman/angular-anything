@@ -8,7 +8,6 @@ import type { Pins } from '../src/lock.ts';
 
 const pins: Pins = { playwright: '1.65.1', browser: 'chromium 159.0.8154.6', case: sha256('the case') };
 
-// Writes a small recording with its lock, lets the test change it, and returns what checkLock finds.
 async function problemsAfter(change: (directory: string) => Promise<unknown>, now: Pins = pins): Promise<string[]> {
   const directory = await mkdtemp(join(tmpdir(), 'aa-lock-'));
   try {
@@ -93,4 +92,35 @@ test('a recording is stale after the case, Playwright or the browser changed', a
   assert.deepEqual(await problemsAfter(async () => {}, { ...pins, browser: 'chromium 160.0.0.0' }), [
     'stale: recorded with Playwright 1.65.1 and chromium 159.0.8154.6, now running Playwright 1.65.1 and chromium 160.0.0.0',
   ]);
+});
+
+test('the pins are part of the root hash: edited together with their lock they still break it', async () => {
+  for (const [field, value] of [
+    ['playwright', '1.66.0'],
+    ['browser', 'chromium 160.0.0.0'],
+    ['case', sha256('the case, edited')],
+  ] as const) {
+    const edited = { ...pins, [field]: value };
+    const problems = await problemsAfter(async (directory) => {
+      const lock = JSON.parse(await readFile(join(directory, 'lock.json'), 'utf8'));
+      await writeFile(join(directory, 'lock.json'), JSON.stringify({ ...lock, [field]: value }));
+    }, edited);
+    assert.deepEqual(problems, ['the root hash in lock.json does not match its content'], field);
+  }
+});
+
+test('the root hash covers every file of the recording and no file that is not in the lock', async () => {
+  const problems = await problemsAfter(async (directory) => {
+    const lock = JSON.parse(await readFile(join(directory, 'lock.json'), 'utf8'));
+    delete lock.files['01.png'];
+    await writeFile(join(directory, 'lock.json'), JSON.stringify(lock));
+  });
+  assert.deepEqual(problems, ['01.png is not in lock.json', 'the root hash in lock.json does not match its content']);
+});
+
+test('a lock that is no object is refused by name', async () => {
+  for (const text of ['null', '[]', '"lock"', '7']) {
+    const problems = await problemsAfter((directory) => writeFile(join(directory, 'lock.json'), text));
+    assert.deepEqual(problems, ['lock.json is not in the format angular-anything/lock@0'], text);
+  }
 });

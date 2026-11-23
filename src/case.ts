@@ -1,6 +1,8 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { sha256 } from './lock.ts';
+import { parseNoise } from './noise.ts';
+import type { Noise } from './noise.ts';
 
 export const CASE_FORMAT = 'angular-anything/case@1';
 export const FRAME_MS = 16;
@@ -21,13 +23,16 @@ export type Case = {
   description?: string;
   viewport: { width: number; height: number };
   steps: Step[];
+  noise?: Noise[];
 };
 
 export type LoadedCase = { case: Case; sha256: string };
 
 export class UsageError extends Error {}
 
-const NAME = /^[a-z0-9][a-z0-9-]*$/;
+const CASE_KEYS = ['format', 'id', 'description', 'viewport', 'steps', 'noise'];
+
+export const NAME = /^[a-z0-9][a-z0-9-]*$/;
 
 export function checkName(kind: string, name: string): string {
   if (!NAME.test(name)) throw new UsageError(`${kind} "${name}" must be lower case letters, digits and dashes`);
@@ -44,7 +49,10 @@ function stepProblem(step: unknown): string | undefined {
   if (!isObject(step)) return 'is not an object';
   switch (step.action) {
     case 'goto':
-      return isText(step.path) && step.path.startsWith('/') ? undefined : 'needs a "path" that starts with /';
+      if (!isText(step.path) || !step.path.startsWith('/')) return 'needs a "path" that starts with /';
+      return /^\/[\\/]/.test(step.path)
+        ? 'needs a "path" that starts with / and stays on the page: it must not start with // or /\\'
+        : undefined;
     case 'click':
     case 'check':
     case 'uncheck':
@@ -75,6 +83,8 @@ export function parseCase(text: string, id: string): Case {
   const data: unknown = JSON.parse(text);
   if (!isObject(data)) throw new Error('the case is not an object');
   if (data.format !== CASE_FORMAT) throw new Error(`"format" must be "${CASE_FORMAT}"`);
+  const unknown = Object.keys(data).find((name) => !CASE_KEYS.includes(name));
+  if (unknown !== undefined) throw new Error(`the key ${JSON.stringify(unknown)} is not known, a case has ${CASE_KEYS.join(', ')}`);
   if (data.id !== id) throw new Error(`"id" must be "${id}", the name of its folder`);
   if (!isObject(data.viewport) || !isSize(data.viewport.width) || !isSize(data.viewport.height)) {
     throw new Error('"viewport" needs a "width" and a "height" in whole pixels');
@@ -85,6 +95,7 @@ export function parseCase(text: string, id: string): Case {
     if (problem) throw new Error(`step ${index + 1} ${problem}`);
   });
   if (data.steps[0].action !== 'goto') throw new Error('step 1 must be a "goto"');
+  if ('noise' in data) parseNoise(data.noise);
   return data as Case;
 }
 
@@ -94,6 +105,8 @@ export async function loadSuite(root: string, suite: string): Promise<LoadedCase
     throw new UsageError(`no suite "${suite}": ${directory} does not exist`);
   });
   const cases: LoadedCase[] = [];
+  const link = entries.find((entry) => entry.isSymbolicLink());
+  if (link) throw new Error(`${join(directory, link.name)} is a symbolic link, a case is a folder of its own`);
   for (const entry of entries.filter((entry) => entry.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
     const file = join(directory, entry.name, 'case.json');
     try {

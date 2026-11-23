@@ -5,7 +5,6 @@ import { join } from 'node:path';
 export const LOCK_FORMAT = 'angular-anything/lock@0';
 export const LOCK_FILE = 'lock.json';
 
-// What a recording is tied to: the versions that produced it and the SHA-256 of the case it was recorded from.
 export type Pins = { playwright: string; browser: string; case: string };
 
 export type Lock = Pins & { format: typeof LOCK_FORMAT; files: Record<string, string>; root: string };
@@ -40,7 +39,6 @@ export async function writeLock(directory: string, pins: Pins): Promise<Lock> {
   return lock;
 }
 
-// Returns what is wrong with the recording in the directory. An empty list means it matches its lock.
 export async function checkLock(directory: string, pins: Pins): Promise<string[]> {
   let lock: Lock;
   try {
@@ -48,7 +46,7 @@ export async function checkLock(directory: string, pins: Pins): Promise<string[]
   } catch {
     return [`no readable ${LOCK_FILE}: record the case first`];
   }
-  if (lock.format !== LOCK_FORMAT || typeof lock.files !== 'object' || lock.files === null) {
+  if (typeof lock !== 'object' || lock === null || lock.format !== LOCK_FORMAT || typeof lock.files !== 'object' || lock.files === null) {
     return [`${LOCK_FILE} is not in the format ${LOCK_FORMAT}`];
   }
   const problems: string[] = [];

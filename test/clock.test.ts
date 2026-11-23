@@ -10,6 +10,12 @@ import { initPage, restPage } from '../src/page.ts';
 import type { DomNode } from '../src/page.ts';
 import { runCase, within } from '../src/run.ts';
 
+const read = (path: string, fragment?: string) => ({ path: path.split('/').slice(1), query: {}, ...(fragment === undefined ? {} : { fragment }) });
+const here = (href: string) => {
+  const [path, fragment = ''] = href.split('#');
+  return { ...read(path), fragment };
+};
+
 const page = `<!doctype html>
 <html lang="en">
 <head>
@@ -45,6 +51,8 @@ const page = `<!doctype html>
   <p><button type="button" id="flash">Flash</button> <output id="flashed"></output></p>
   <p><button type="button" id="picture">Picture</button> <output id="shown"></output></p>
   <p><button type="button" id="chain">Chain</button> <output id="chained"></output></p>
+  <p><button type="button" id="enter">Enter</button> <output id="entered"></output></p>
+  <p><button type="button" id="closing">Closing</button> <output id="closed"></output></p>
   <p id="stamps"></p>
 </main>
 <script>
@@ -165,6 +173,23 @@ const page = `<!doctype html>
       byId('shown').textContent = due ? 'shown' : 'shown early';
     };
     picture.src = '/dot.png';
+  });
+
+  byId('enter').addEventListener('click', () => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      byId('entered').textContent = 'entering';
+      setTimeout(() => {
+        byId('entered').textContent = 'entered';
+      }, 201);
+    }));
+  });
+
+  byId('closing').addEventListener('click', () => {
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        byId('closed').textContent = 'closed';
+      }, 300);
+    });
   });
 
   byId('chain').addEventListener('click', () => {
@@ -514,6 +539,8 @@ const testCase: Case = {
     { action: 'click', target: button('Flash') },
     { action: 'click', target: button('Picture') },
     { action: 'click', target: button('Chain') },
+    { action: 'click', target: button('Enter') },
+    { action: 'click', target: button('Closing') },
   ],
 };
 
@@ -602,7 +629,7 @@ test('one case run 20 times gives one end state', { timeout: 300_000 }, async ()
   await Promise.all(Array.from({ length: AT_ONCE }, next));
 
   for (const run of runs) assert.equal(run.error, undefined);
-  const states = new Set(runs.map((run) => JSON.stringify(run.steps.map((step) => [step.observation, step.captures]))));
+  const states = new Set(runs.map((run) => JSON.stringify(run.steps.map((step) => [step.observation, step.frames]))));
   assert.equal(states.size, 1);
 
   const steps = runs[0].steps.map((step) => step.observation);
@@ -612,10 +639,10 @@ test('one case run 20 times gives one end state', { timeout: 300_000 }, async ()
     assert.equal(longhand(step, `${heading}/span[1]`, 'opacity'), '1');
     assert.equal(longhand(step, `${heading}/span[2]`, 'transform'), 'matrix(1, 0, 0, 1, 0, 0)');
   }
-  assert.equal(text(steps[0], 'stamps'), 'loaded at 0 on 2026-01-01T00:00:00.000Z, answer at 0, ');
+  assert.equal(text(steps[0], 'stamps'), 'loaded at 0 on 2026-01-01T00:00:00.000Z, answer at 0,');
   assert.equal(text(steps[1], 'count'), '1');
-  assert.equal(text(steps[2], 'found'), '');
-  assert.equal(text(steps[3], 'found'), 'abc after 300 ms');
+  assert.equal(text(steps[1], 'found'), '');
+  assert.equal(text(steps[2], 'found'), 'abc after 300 ms');
   assert.deepEqual(find(steps[4].dom, 'region')?.children, [
     { tag: 'div', attrs: { class: 'toast', role: 'status' }, children: ['Saved, 4 s left'] },
   ]);
@@ -634,21 +661,23 @@ test('one case run 20 times gives one end state', { timeout: 300_000 }, async ()
   assert.equal(text(steps[10], 'sent'), 'answered after 0 ms');
   assert.deepEqual(find(steps[10].dom, 'send')?.attrs, { id: 'send', type: 'button' });
   assert.equal(steps[10].effects.focus, 'html[1]/body[1]');
-  assert.deepEqual(steps[10].effects.requests, [{ method: 'POST', url: '/api/echo', body: {} }]);
+  assert.deepEqual(steps[10].effects.requests, [{ method: 'POST', url: read('/api/echo'), body: {} }]);
   assert.equal(
     text(steps[10], 'stamps'),
-    'loaded at 0 on 2026-01-01T00:00:00.000Z, answer at 0, inc at 16, show at 368, send at 4544, ',
+    'loaded at 0 on 2026-01-01T00:00:00.000Z, answer at 0, inc at 96, show at 896, send at 5360,',
   );
-  assert.equal(text(steps[11], 'seen'), '');
+  assert.equal(text(steps[11], 'seen'), 'answer seen 112 ms after the click');
   assert.equal(text(steps[12], 'seen'), 'answer seen 112 ms after the click');
   assert.equal(text(steps[13], 'both'), 'answer 2');
-  assert.deepEqual(steps[13].effects.gets, ['/api/data']);
+  assert.deepEqual(steps[13].effects.gets, [read('/api/data')]);
   assert.equal(text(steps[14], 'flashed'), 'flashed');
   assert.equal(text(steps[15], 'shown'), 'shown');
   assert.equal(text(steps[16], 'chained'), 'chained');
+  assert.equal(text(steps[17], 'entered'), 'entered');
+  assert.equal(text(steps[18], 'closed'), 'closed');
   assert.deepEqual(
-    runs[0].steps.map((step) => step.captures),
-    testCase.steps.map((step) => (step.action === 'click' && step.target.name === 'Twice' ? 4 : 2)),
+    runs[0].steps.map((step) => step.frames),
+    [6, 4, 23, 23, 4, 119, 144, 4, 4, 4, 4, 11, 14, 6, 4, 4, 4, 19, 24],
   );
 });
 
@@ -693,22 +722,22 @@ const visit = (path: string, ...steps: Case['steps']) =>
   runCase(browser, { ...testCase, id: 'visit', steps: [{ action: 'goto', path }, ...steps] }, base);
 
 const state = (run: Awaited<ReturnType<typeof runCase>>) =>
-  JSON.stringify([run.error, run.steps.map((step) => [step.observation, step.captures])]);
+  JSON.stringify([run.error, run.steps.map((step) => [step.observation, step.frames])]);
 
 test('a page that leaves by itself is followed to the page it loads', { timeout: 120_000 }, async () => {
   const ways: [string, Case['steps'], string][] = [
-    ['a link', [{ action: 'click', target: { role: 'link', name: 'Next' } }], 'started at 16, loaded 7, margin 40px'],
-    ['a form', [{ action: 'click', target: button('Submit') }], 'started at 16, loaded 7, margin 40px'],
-    ['a script', [{ action: 'click', target: button('Assign') }], 'started at 16, loaded 7, margin 40px'],
-    ['an answer', [{ action: 'click', target: button('Sign in') }], 'started at 16, loaded 7, margin 40px'],
-    ['a task', [{ action: 'click', target: button('Task') }], 'started at 16, loaded 7, margin 40px'],
+    ['a link', [{ action: 'click', target: { role: 'link', name: 'Next' } }], 'started at 64, loaded 7, margin 40px'],
+    ['a form', [{ action: 'click', target: button('Submit') }], 'started at 64, loaded 7, margin 40px'],
+    ['a script', [{ action: 'click', target: button('Assign') }], 'started at 64, loaded 7, margin 40px'],
+    ['an answer', [{ action: 'click', target: button('Sign in') }], 'started at 64, loaded 7, margin 40px'],
+    ['a task', [{ action: 'click', target: button('Task') }], 'started at 64, loaded 7, margin 40px'],
     [
       'a timer',
       [
         { action: 'click', target: button('Later') },
         { action: 'advance', frames: 10 },
       ],
-      'started at 128, loaded 7, margin 40px',
+      'started at 176, loaded 7, margin 40px',
     ],
   ];
   for (const [way, steps, shown] of ways) {
@@ -718,7 +747,7 @@ test('a page that leaves by itself is followed to the page it loads', { timeout:
     const last = runs[0].steps.at(-1)!.observation;
     assert.equal(last.effects.title, 'Second', way);
     assert.equal(text(last, 'out'), shown, way);
-    assert.deepEqual(last.effects.gets, ['/api/data'], way);
+    assert.deepEqual([...new Set(runs[0].steps.flatMap((step) => step.observation.effects.gets.map((get) => get.path.join('/'))))], ['api/data'], way);
   }
 
   const again = await visit('/first', { action: 'click', target: button('Reload') });
@@ -751,10 +780,10 @@ test('a navigation that ends without a new page leaves the page as it is', async
     { action: 'click', target: button('Push') },
   );
   assert.equal(inside.error, undefined);
-  assert.equal(text(inside.steps[3].observation, 'part'), 'routed, at #part, pushed, ');
+  assert.equal(text(inside.steps[3].observation, 'part'), 'routed, at #part, pushed,');
   assert.deepEqual(
     inside.steps.map((step) => step.observation.effects.url),
-    ['/first', '/routed', '/routed#part', '/pushed'],
+    ['/first', '/routed', '/routed#part', '/pushed'].map(here),
   );
 
   const stopped = await visit(
@@ -774,7 +803,10 @@ test('a synchronous request is answered at once, while the page loads and in a c
   assert.equal(run.error, undefined);
   assert.equal(text(run.steps[0].observation, 'first'), 'loaded 7');
   assert.equal(text(run.steps[1].observation, 'again'), 'loaded 7 after a redirect');
-  assert.deepEqual(run.steps[1].observation.effects.gets, ['/api/data', '/api/moved']);
+  assert.deepEqual(
+    run.steps[1].observation.effects.gets.map((get) => get.path.join('/')).sort(),
+    ['api/data', 'api/moved'],
+  );
 });
 
 test('an answer that the page does not read ends its request', async () => {
@@ -800,8 +832,8 @@ test('a wait that does not end fails the step after 5000 ms and names what was w
     navigation.error,
     'step 2 (click button "Hang"): locator.click: Timeout 5000ms exceeded., the navigation to /api/never had not loaded',
   );
-  assert.equal(later.error, 'step 3 (advance 5 frames): the navigation to /api/never did not load in 5000 ms');
-  assert.equal(clock.error, 'step 3 (advance 5 frames): waited 5000 ms for a frame of the page clock');
+  assert.equal(later.error, 'step 2 (click button "Hang soon"): the navigation to /api/never did not load in 5000 ms');
+  assert.equal(clock.error, 'step 2 (click button "Spin"): waited 5000 ms for a frame of the page clock');
 });
 
 test('a step has a limit in real time, and a wait is cut off with the message of that moment', { timeout: 60_000 }, async () => {
@@ -822,9 +854,9 @@ test('a step has a limit in real time, and a wait is cut off with the message of
   const [settling, advancing, shooting] = await Promise.all(
     [steps, soon, frozen].map((list) => runCase(browser, { ...testCase, id: 'limit', steps: list }, base, 2000)),
   );
-  assert.match(settling.error ?? '', /^step 2 \(click button "Poll"\): no end after 2000 ms, the last wait was for /);
-  assert.match(advancing.error ?? '', /^step 3 \(advance 5 frames\): no end after 2000 ms, the last wait was for /);
-  assert.equal(shooting.error, 'step 2 (click button "Freeze"): no end after 2000 ms, the last wait was for the screenshot');
+  assert.match(settling.error ?? '', /^step 2 \(click button "Poll"\): no frame of the page in 2000 ms, the last wait was for /);
+  assert.match(advancing.error ?? '', /^step 2 \(click button "Poll soon"\): no frame of the page in 2000 ms, the last wait was for /);
+  assert.equal(shooting.error, 'step 2 (click button "Freeze"): no frame of the page in 2000 ms, the last wait was for the screenshot');
   assert.ok(Date.now() - started < 15_000);
 
   let waited = 'the first thing';

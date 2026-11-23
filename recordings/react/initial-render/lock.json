@@ -4,9 +4,9 @@
   "browser": "chromium 159.0.8154.6",
   "case": "f87d6d3c7be5ce89b7f9b9bd2998512af51f36e4fad2c9c6e1882a34a129dc3e",
   "files": {
-    "01.json": "3b2d58e996c3ea322ebef8fa7d77e373c7afdcf2d65d4faaaa90430ce2b6ecfa",
+    "01.json": "ab50bb289c2764ae25f866459d94d37d62be5d650780e126760097c6f4f92d79",
     "01.png": "b627e0829e671047d756b4d2350c158f8d0a93d42891472728e63be6774c890d",
-    "recording.json": "f9c7e824dbecbcf0831dbd317f4ef312d57a1c4b392019edc63b7e6d1951f63c"
+    "recording.json": "c28e79dafd1c5f4b9ab404662350ff2c7121de943bd15f3c041e58c318def6c6"
   },
-  "root": "692d6176951254b7e9fdfa0aa8c1b2458a13262b92ef71cc4bca8a0e25eba8ff"
+  "root": "7ec2ba09d59709ef266d920def4568d3f08548c236129b4ec6108102d238d7f4"
 }

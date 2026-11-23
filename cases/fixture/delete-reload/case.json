@@ -1,0 +1,15 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "delete-reload",
+  "description": "An empty stored list stays empty",
+  "viewport": { "width": 1024, "height": 768 },
+  "steps": [
+    { "action": "goto", "path": "/" },
+    { "action": "click", "target": { "role": "button", "name": "Delete Buy milk" } },
+    { "action": "reload" },
+    { "action": "click", "target": { "role": "button", "name": "Delete Write report" } },
+    { "action": "reload" },
+    { "action": "fill", "target": { "role": "textbox", "name": "New task" }, "value": "Call mom" },
+    { "action": "click", "target": { "role": "button", "name": "Add" } }
+  ]
+}

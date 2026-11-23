@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Popups</title>
+</head>
+<body>
+<main>
+  <h1>Popups</h1>
+  <button type="button" id="add">Add</button>
+  <button type="button" id="later">Later</button>
+  <button type="button" id="remove">Delete</button>
+  <button type="button" id="rename">Rename</button>
+  <button type="button" id="side">Open</button>
+  <button type="button" id="both">Add and open</button>
+  <button type="button" id="print">Print</button>
+  <button type="button" id="plain">Open plain</button>
+  <button type="button" id="inside">Popup alert</button>
+  <button type="button" id="closed">Closed</button>
+  <a href="/elsewhere" target="_blank" id="link">Elsewhere</a>
+  <p id="state">idle</p>
+</main>
+<script>
+  const bug = new URLSearchParams(location.search).get('bug');
+  const state = document.getElementById('state');
+  let opened = null;
+  const on = (id, handler) => document.getElementById(id).addEventListener('click', handler);
+
+  function added() {
+    if (bug === 'no-alert') return;
+    alert(bug === 'alert-text' ? 'Task added: Call mom!' : 'Task added: Call mom');
+    if (bug === 'alert-twice') alert('Task added: Call mom');
+    state.textContent = 'added';
+  }
+  function side() {
+    if (bug === 'no-open') return;
+    const url = bug === 'open-url' ? '/popup?n=2' : '/popup?n=1';
+    const target = bug === 'open-target' ? '_blank' : 'side';
+    const features = bug === 'open-features' ? 'width=400' : 'width=300';
+    const result = window.open(url, target, features);
+    opened = result;
+    state.textContent = 'opened ' + typeof result + ' ' + (result && result.closed);
+  }
+
+  on('add', added);
+  on('later', () => setTimeout(added, 100));
+  on('remove', () => {
+    fetch('/api/check').then((response) => response.json()).then(() => {
+      if (bug === 'no-confirm') state.textContent = 'deleted';
+      else {
+        const answer = confirm(bug === 'confirm-text' ? 'Delete it?' : 'Delete this task?');
+        state.textContent = (answer ? 'deleted' : 'kept') + ' answer ' + answer;
+      }
+    });
+  });
+  on('rename', () => {
+    const name = prompt(bug === 'prompt-text' ? 'Your name?' : 'Name?', bug === 'prompt-default' ? 'Grace' : 'Ada');
+    state.textContent = 'name ' + name;
+  });
+  on('side', side);
+  on('both', () => {
+    if (bug === 'order') {
+      side();
+      added();
+    } else {
+      added();
+      side();
+    }
+  });
+  on('plain', () => {
+    opened = window.open('/popup');
+  });
+  on('inside', () => {
+    const popup = window.open('', 'inner');
+    popup.alert('from popup');
+    if (popup.__aa) popup.__aa.emit('from popup', { n: 1 });
+    state.textContent = 'popup alerted';
+  });
+  on('closed', () => {
+    state.textContent = 'closed ' + (opened && opened.closed);
+  });
+  on('print', () => {
+    if (bug !== 'no-print') window.print();
+  });
+</script>
+</body>
+</html>

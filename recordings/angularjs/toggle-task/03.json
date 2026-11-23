@@ -2314,10 +2314,38 @@
     "requests": [],
     "gets": [],
     "storage": {
-      "tasks": "[{\"id\":1,\"title\":\"Buy milk\",\"done\":true},{\"id\":2,\"title\":\"Write report\",\"done\":false}]"
+      "tasks": [
+        {
+          "id": 1,
+          "title": "Buy milk",
+          "done": true,
+          "$order": [
+            "id",
+            "title",
+            "done"
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Write report",
+          "done": false,
+          "$order": [
+            "id",
+            "title",
+            "done"
+          ]
+        }
+      ]
     },
-    "url": "/",
+    "url": {
+      "path": [
+        ""
+      ],
+      "query": {},
+      "fragment": ""
+    },
     "title": "Tasks",
-    "focus": "html[1]/body[1]/div[1]/main[1]/ul[1]/li[2]/input[1]"
+    "focus": "html[1]/body[1]/div[1]/main[1]/ul[1]/li[2]/input[1]",
+    "popups": []
   }
 }

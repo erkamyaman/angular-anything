@@ -1,0 +1,16 @@
+{
+  "format": "angular-anything/recording@2",
+  "suite": "fixture",
+  "case": "add-under-done-filter",
+  "source": "react",
+  "url": "http://localhost:4101/",
+  "steps": 5,
+  "frames": [
+    4,
+    4,
+    4,
+    4,
+    4
+  ],
+  "screenshotNoise": []
+}

@@ -1,0 +1,16 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "id-after-delete",
+  "description": "A new id is the highest id in the list plus 1",
+  "viewport": { "width": 1024, "height": 768 },
+  "steps": [
+    { "action": "goto", "path": "/" },
+    { "action": "click", "target": { "role": "button", "name": "Delete Write report" } },
+    { "action": "fill", "target": { "role": "textbox", "name": "New task" }, "value": "Call mom" },
+    { "action": "click", "target": { "role": "button", "name": "Add" } },
+    { "action": "click", "target": { "role": "button", "name": "Delete Buy milk" } },
+    { "action": "click", "target": { "role": "button", "name": "Delete Call mom" } },
+    { "action": "fill", "target": { "role": "textbox", "name": "New task" }, "value": "Pay rent" },
+    { "action": "click", "target": { "role": "button", "name": "Add" } }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "format": "angular-anything/recording@2",
+  "suite": "fixture",
+  "case": "toggle-under-filter",
+  "source": "angularjs",
+  "url": "http://localhost:4103/",
+  "steps": 6,
+  "frames": [
+    4,
+    4,
+    4,
+    4,
+    4,
+    4
+  ],
+  "screenshotNoise": []
+}

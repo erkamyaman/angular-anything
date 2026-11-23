@@ -2576,10 +2576,48 @@
     "requests": [],
     "gets": [],
     "storage": {
-      "tasks": "[{\"id\":1,\"title\":\"Buy milk\",\"done\":false},{\"id\":2,\"title\":\"Write report\",\"done\":true},{\"id\":3,\"title\":\"Call mom\",\"done\":false}]"
+      "tasks": [
+        {
+          "id": 1,
+          "title": "Buy milk",
+          "done": false,
+          "$order": [
+            "id",
+            "title",
+            "done"
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Write report",
+          "done": true,
+          "$order": [
+            "id",
+            "title",
+            "done"
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Call mom",
+          "done": false,
+          "$order": [
+            "id",
+            "title",
+            "done"
+          ]
+        }
+      ]
     },
-    "url": "/",
+    "url": {
+      "path": [
+        ""
+      ],
+      "query": {},
+      "fragment": ""
+    },
     "title": "Tasks",
-    "focus": "html[1]/body[1]/div[1]/main[1]/form[1]/input[1]"
+    "focus": "html[1]/body[1]/div[1]/main[1]/form[1]/input[1]",
+    "popups": []
   }
 }

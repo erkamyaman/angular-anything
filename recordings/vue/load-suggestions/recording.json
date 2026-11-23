@@ -1,9 +1,13 @@
 {
-  "format": "angular-anything/recording@0",
+  "format": "angular-anything/recording@2",
   "suite": "fixture",
   "case": "load-suggestions",
   "source": "vue",
   "url": "http://localhost:4102/",
   "steps": 2,
-  "masked": []
+  "frames": [
+    4,
+    4
+  ],
+  "screenshotNoise": []
 }

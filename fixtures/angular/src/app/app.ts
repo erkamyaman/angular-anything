@@ -38,7 +38,7 @@ function loadTasks(): Task[] {
       </div>
       <ul class="tasks" aria-label="Tasks">
         @for (task of visible(); track task.id) {
-          <li [appTaskRow]="task" (taskToggled)="toggle($event)" (taskDeleted)="remove($event)"></li>
+          <li class="task" [task]="task" (taskToggled)="toggle($event)" (taskDeleted)="remove($event)"></li>
         }
       </ul>
       <p class="count" aria-live="polite">{{ count() }}</p>

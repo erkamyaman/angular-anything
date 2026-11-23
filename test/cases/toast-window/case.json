@@ -1,0 +1,12 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "toast-window",
+  "description": "The last step ends 336 ms before the 2000 ms toast timer is due, so the step stays open until the toast has left.",
+  "viewport": { "width": 800, "height": 600 },
+  "steps": [
+    { "action": "goto", "path": "/" },
+    { "action": "fill", "target": { "role": "textbox", "name": "New task" }, "value": "Call mom" },
+    { "action": "click", "target": { "role": "button", "name": "Add" } },
+    { "action": "advance", "frames": 100 }
+  ]
+}

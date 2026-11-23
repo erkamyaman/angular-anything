@@ -1,5 +1,8 @@
 import { LAYERS, LAYER_NAMES } from './compare.ts';
 import type { Difference, Layer, LayerResult } from './compare.ts';
+import type { Unread } from './page.ts';
+import { keyPath } from './path.ts';
+import { isObject } from './value.ts';
 
 export const REPORT_FORMAT = 'angular-anything/report@0';
 const KEPT_DIFFERENCES = 10;
@@ -10,10 +13,10 @@ export type StepReport = {
   result: 'pass' | 'fail';
   settleMs: number;
   captures: number;
-  // Soft: it never changes a result.
+  frames: number;
   screenshot: 'identical' | 'different' | 'masked';
-  // "first" holds the first differences of the layer, "differences" counts all of them.
   layers: Record<Layer, { differences: number; masked: number; first: Difference[] }>;
+  convention: string[];
 };
 
 export type CaseReport = {
@@ -38,15 +41,43 @@ export type Report = {
   cases: CaseReport[];
 };
 
+function onlyUnreadAttributes(differences: Difference[], unread: Unread): string[] {
+  if (differences.length === 0) return [];
+  const single = new Map<string, string>();
+  const all = new Map<string, Set<string>>();
+  for (const { path, attribute } of unread) {
+    const attrs = keyPath(path, 'attrs');
+    single.set(keyPath(attrs, attribute), attribute);
+    all.set(attrs, (all.get(attrs) ?? new Set()).add(attribute));
+  }
+  const found: string[] = [];
+  for (const { path, expected, actual } of differences) {
+    const name = single.get(path);
+    const group = all.get(path);
+    if (name !== undefined && expected === undefined && actual === '') {
+      found.push(name);
+    } else if (group && expected === undefined && isObject(actual) && Object.keys(actual).length > 0) {
+      const entries = Object.entries(actual);
+      if (!entries.every(([key, value]) => group.has(key) && value === '')) return [];
+      found.push(...entries.map(([key]) => key));
+    } else {
+      return [];
+    }
+  }
+  return [...new Set(found)].sort();
+}
+
 export function stepReport(
   step: number,
   action: string,
-  timing: { settleMs: number; captures: number },
+  timing: { settleMs: number; captures: number; frames: number },
   screenshot: StepReport['screenshot'],
   layers: Record<Layer, LayerResult>,
+  unread: Unread = [],
 ): StepReport {
-  const { settleMs, captures } = timing;
-  const report = { step, action, result: 'pass', settleMs, captures, screenshot, layers: {} } as StepReport;
+  const { settleMs, captures, frames } = timing;
+  const report = { step, action, result: 'pass', settleMs, captures, frames, screenshot, layers: {} } as StepReport;
+  report.convention = onlyUnreadAttributes(layers.dom.differences, unread);
   for (const layer of LAYERS) {
     const { differences, masked } = layers[layer];
     report.layers[layer] = { differences: differences.length, masked, first: differences.slice(0, KEPT_DIFFERENCES) };
@@ -55,7 +86,6 @@ export function stepReport(
   return report;
 }
 
-// A case passes when every step ran and no hard layer differs. A suite with no cases fails.
 export function finish(report: Report): Report {
   for (const item of report.cases) {
     const clean = !item.lock && !item.error && item.steps.length === item.stepCount;
@@ -85,20 +115,27 @@ export function summarize(report: Report): string {
   for (const item of report.cases) {
     const id = item.id.padEnd(width);
     if (item.result === 'pass') {
-      lines.push(`PASS  ${id}  ${count(item.steps.length, 'step')}`);
+      lines.push(`PASS  ${id}  ${count(item.steps.length, 'step')}, frames: ${item.steps.map((step) => step.frames).join(' ')}`);
       continue;
     }
     lines.push(`FAIL  ${item.id}`);
     for (const problem of item.lock ?? []) lines.push(`      lock: ${problem}`);
     const [first, ...rest] = item.steps.filter((step) => step.result === 'fail');
     if (first) {
-      lines.push(`      step ${first.step} of ${item.stepCount}: ${first.action}`);
+      lines.push(`      step ${first.step} of ${item.stepCount}: ${first.action} (${first.frames} frames)`);
       for (const layer of LAYERS) {
         const { differences, first: kept } = first.layers[layer];
         if (differences === 0) continue;
         lines.push(`        ${LAYER_NAMES[layer]}: ${count(differences, 'difference')}, the first at ${kept[0].path}`);
         lines.push(`          expected: ${show(kept[0].expected)}`);
         lines.push(`          actual:   ${show(kept[0].actual)}`);
+      }
+      if (first.convention.length > 0) {
+        lines.push(
+          `      The only differences in the DOM are empty attributes that only the port has and the browser does not read on that element: ${first.convention.join(', ')}.`,
+          '      If one of them is the selector of a component, give the component a selector that the original element already matches',
+          '      (tag and class such as li.task, or an existing attribute such as [id=root]), else an input alias that is bound.',
+        );
       }
     }
     if (rest.length > 0) lines.push(`      also differs at step ${rest.map((step) => step.step).join(', ')}`);
@@ -113,7 +150,7 @@ export function summarize(report: Report): string {
     '',
     `${failedCases} of ${report.cases.length} cases failed. ` +
       `${steps.filter((step) => step.result === 'fail').length} of ${steps.length} compared steps differ.`,
-    `Differences ignored because the original itself varied between its two recording runs: ${masked}.`,
+    `Values not compared because the case names them as noise: ${masked}.`,
     `Screenshots (soft, they never fail the gate): ${shots('identical')} identical, ${shots('different')} different, ${shots('masked')} masked.`,
   );
   return lines.join('\n');

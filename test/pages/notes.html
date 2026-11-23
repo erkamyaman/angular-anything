@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Notes</title>
+<style>body { margin: 20px; font: 15px/1.4 sans-serif } button { margin-right: 8px }</style>
+</head>
+<body>
+<main>
+<h1>Notes</h1>
+<button type="button" id="keep">Keep note</button>
+<button type="button" id="sync">Sync</button>
+<button type="button" id="send">Send file</button>
+<ol id="notes" aria-label="Notes"></ol>
+<p id="status" role="status">ready</p>
+</main>
+<script>
+const broken = new URLSearchParams(location.search).get('broken');
+const hex = (bytes) => Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, '0')).join('');
+const status = (text) => { document.getElementById('status').textContent = text; };
+const notes = [];
+localStorage.setItem('cart', broken === 'cart7' ? '7' : hex(8));
+
+document.getElementById('keep').addEventListener('click', () => {
+  const refs = { 'ref-number': 7, 'ref-empty': '', 'ref-object': { a: 1 } };
+  const note = { ref: broken in refs ? refs[broken] : hex(6), text: 'Pay rent', pinned: false };
+  notes.push(note);
+  const row = document.createElement('li');
+  row.textContent = note.text;
+  document.getElementById('notes').append(row);
+  if (broken !== 'store') localStorage.setItem('notes', JSON.stringify(notes));
+  localStorage.setItem('cart.items', broken === 'items' ? '7' : '2');
+  localStorage.setItem('lang', broken === 'lang' ? 'de' : 'en');
+  status('kept');
+});
+
+document.getElementById('sync').addEventListener('click', async () => {
+  if (broken === 'sync-none') await new Promise((done) => setTimeout(done, 25));
+  else await (await fetch((broken === 'sync-other' ? '/rpc/elsewhere' : '/rpc/notes') + '?nonce=' + hex(5))).text();
+  status('synced');
+});
+
+document.getElementById('send').addEventListener('click', async () => {
+  const form = new FormData();
+  form.append('name', broken === 'field' ? 'WRONG.txt' : 'rent.txt');
+  form.append('kind', 'note');
+  await (await fetch('/rpc/files', { method: 'POST', body: form })).text();
+  status('sent');
+});
+</script>
+</body>
+</html>

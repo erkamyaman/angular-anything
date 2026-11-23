@@ -1,9 +1,14 @@
 {
-  "format": "angular-anything/recording@0",
+  "format": "angular-anything/recording@2",
   "suite": "fixture",
   "case": "toggle-task",
   "source": "vue",
   "url": "http://localhost:4102/",
   "steps": 3,
-  "masked": []
+  "frames": [
+    4,
+    4,
+    4
+  ],
+  "screenshotNoise": []
 }

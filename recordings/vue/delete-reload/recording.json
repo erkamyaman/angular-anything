@@ -1,0 +1,18 @@
+{
+  "format": "angular-anything/recording@2",
+  "suite": "fixture",
+  "case": "delete-reload",
+  "source": "vue",
+  "url": "http://localhost:4102/",
+  "steps": 7,
+  "frames": [
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4
+  ],
+  "screenshotNoise": []
+}

@@ -1,0 +1,15 @@
+{
+  "format": "angular-anything/recording@2",
+  "suite": "fixture",
+  "case": "filter-reselect",
+  "source": "angularjs",
+  "url": "http://localhost:4103/",
+  "steps": 4,
+  "frames": [
+    4,
+    4,
+    4,
+    4
+  ],
+  "screenshotNoise": []
+}

@@ -10,8 +10,6 @@ import { fileURLToPath } from 'node:url';
 
 const cli = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 
-// A static page that misbehaves on purpose with ?bug=<name>, like the Angular fixture does.
-// data-nonce is different on every load, so it is noise that the two recording runs have to mask.
 const page = `<!doctype html>
 <html lang="en">
 <head>
@@ -57,6 +55,7 @@ const page = `<!doctype html>
   function save() {
     const name = input.value;
     if (bug !== 'storage') localStorage.setItem('name', name);
+    localStorage.setItem('prefs', JSON.stringify({ name, order: [1, 2] }));
     window.__aa?.emit('saved', { name });
     if (bug === 'events') window.__aa?.emit('saved', { name });
     if (bug !== 'focus') input.focus();
@@ -95,6 +94,8 @@ const page = `<!doctype html>
 </html>
 `;
 
+const nonce = { layer: 'dom', path: 'html[1]/body[1]/main[1].attrs.data-nonce' };
+
 const emptyPage = '<!doctype html><html lang="en"><head><title>Tiny</title></head><body><main></main></body></html>';
 
 const steps = [
@@ -108,7 +109,6 @@ const steps = [
   { action: 'reload' },
 ];
 
-// The layers the summary must name at the first differing step, and the path of a first difference.
 const bugs: Record<string, { layers: string[]; path: string }> = {
   events: { layers: ['events'], path: '[1]' },
   dom: { layers: ['DOM', 'style and geometry'], path: 'html[1]/body[1]/main[1]/p[1].attrs.class' },
@@ -142,7 +142,6 @@ async function serve(html: string): Promise<string> {
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
-// Runs the CLI in the temporary project. The servers live in this process, so the call must not block it.
 function run(...args: string[]): Promise<{ status: number | string; output: string }> {
   return new Promise((resolve) => {
     execFile(process.execPath, [cli, ...args], { cwd: root }, (error, stdout, stderr) => {
@@ -160,7 +159,6 @@ const exists = (file: string) => access(file).then(
 
 type Recorded = { style: Record<string, { style: Record<string, string> }> };
 
-// The value of a longhand for an element: its own, or the one of the closest ancestor that lists it.
 function longhand(observation: Recorded, path: string, property: string): string | undefined {
   for (;;) {
     const value = observation.style[path].style[property];
@@ -175,8 +173,13 @@ before(async () => {
   root = await mkdtemp(join(tmpdir(), 'aa-e2e-'));
   await mkdir(join(root, 'cases', 'tiny', 'save'), { recursive: true });
   await mkdir(join(root, 'cases', 'none'), { recursive: true });
-  const testCase = { format: 'angular-anything/case@1', id: 'save', viewport: { width: 800, height: 600 }, steps };
+  const testCase = { format: 'angular-anything/case@1', id: 'save', viewport: { width: 800, height: 600 }, steps, noise: [nonce] };
   await writeFile(join(root, 'cases', 'tiny', 'save', 'case.json'), JSON.stringify(testCase, null, 2));
+  await mkdir(join(root, 'cases', 'bare', 'save'), { recursive: true });
+  await writeFile(
+    join(root, 'cases', 'bare', 'save', 'case.json'),
+    JSON.stringify({ ...testCase, noise: undefined, steps: steps.slice(0, 1) }, null, 2),
+  );
   [original, port, empty] = await Promise.all([serve(page), serve(page), serve(emptyPage)]);
 });
 
@@ -197,20 +200,26 @@ test('record launches Chromium, writes a locked recording and masks the noise of
   assert.match(lock.browser, /^chromium \d+\./);
 
   const recording = JSON.parse(await readFile(recorded('recording.json'), 'utf8'));
-  assert.deepEqual(
-    recording.masked,
-    steps.map((_, index) => ({ step: index + 1, layer: 'dom', path: 'html[1]/body[1]/main[1].attrs.data-nonce' })),
-  );
+  assert.equal(recording.format, 'angular-anything/recording@2');
+  assert.deepEqual(recording.screenshotNoise, []);
+  assert.match(output, /noise dom html\[1\]\/body\[1\]\/main\[1\]\.attrs\.data-nonce: 8 values masked/);
+  for (let step = 1; step <= steps.length; step++) {
+    const stored = JSON.parse(await readFile(recorded(`0${step}.json`), 'utf8'));
+    const mask: Record<string, unknown> = { $aa: 'noise', kind: 'string' };
+    if (step < steps.length) mask.group = 1;
+    assert.deepEqual(stored.dom.children[0].children[0].attrs['data-nonce'], mask, `step ${step}: one value is tied across the steps of one load, the reload has its own`);
+  }
 
   const afterEnter = JSON.parse(await readFile(recorded('03.json'), 'utf8'));
   assert.deepEqual(afterEnter.events, [{ name: 'saved', payload: { name: 'Ada' } }]);
   assert.deepEqual(afterEnter.effects, {
-    requests: [{ method: 'POST', url: '/api/names', body: { name: 'Ada' } }],
+    requests: [{ method: 'POST', url: { path: ['api', 'names'], query: {} }, body: { name: 'Ada' } }],
     gets: [],
-    storage: { name: 'Ada' },
-    url: '/',
+    storage: { name: 'Ada', prefs: { name: 'Ada', order: [1, 2], $order: ['name', 'order'] } },
+    url: { path: [''], query: {}, fragment: '' },
     title: 'Tiny',
     focus: 'html[1]/body[1]/main[1]/input[1]',
+    popups: [],
   });
   assert.deepEqual(afterEnter.accessibility.tree[0].children[3], { role: 'button', name: 'Save', expanded: true });
   const state = async (step: string, property: string) =>
@@ -227,12 +236,65 @@ test('record launches Chromium, writes a locked recording and masks the noise of
   });
 });
 
+test('record exits 1 for a mask the case does not name, prints it in the form the case needs, and leaves no recording', async () => {
+  const folder = join(root, 'recordings', 'bare', 'save');
+  const bare = (command: string) => run(command, 'bare', '--source', 'bare', '--url', original);
+  await mkdir(folder, { recursive: true });
+  await writeFile(join(folder, 'old.json'), '{}');
+  const { status, output } = await bare('record');
+  assert.equal(status, 1, output);
+  assert.match(output, /^FAIL {2}save$/m);
+  assert.ok(output.includes(JSON.stringify(nonce)), output);
+  assert.equal(await exists(join(folder, 'old.json')), false, 'no recording is left, also not the one from before');
+  assert.equal(await exists(join(folder, 'lock.json')), false);
+  const afterwards = await bare('gate');
+  assert.equal(afterwards.status, 1, afterwards.output);
+  assert.match(afterwards.output, /lock: no readable lock\.json/);
+  assert.equal(JSON.parse(await readFile(join(root, 'reports', 'bare', 'report.json'), 'utf8')).result, 'fail');
+
+  const printed = JSON.parse(output.split('\n').find((line) => line.trim().startsWith('{"layer"'))!);
+  const file = join(root, 'cases', 'bare', 'save', 'case.json');
+  const testCase = JSON.parse(await readFile(file, 'utf8'));
+  await writeFile(file, JSON.stringify({ ...testCase, noise: [printed] }));
+  const again = await bare('record');
+  assert.equal(again.status, 0, again.output);
+  assert.equal((await bare('gate')).status, 0);
+
+  await writeFile(file, JSON.stringify({ ...testCase, noise: [printed, { layer: 'dom', path: 'html[1]/body[1]/main[1].attrs.nothing' }] }));
+  const stale = await bare('record');
+  assert.equal(stale.status, 1, stale.output);
+  assert.match(stale.output, /matches nothing in any step/);
+  assert.equal(await exists(join(folder, 'lock.json')), false, 'no recording is left, also not the one from before');
+  await rm(join(root, 'cases', 'bare'), { recursive: true });
+});
+
+test('replay refuses a recording in another format and one that masks what the case does not name', async () => {
+  const file = recorded('recording.json');
+  const caseFile = join(root, 'cases', 'tiny', 'save', 'case.json');
+  const recording = await readFile(file, 'utf8');
+  const testCase = await readFile(caseFile, 'utf8');
+  try {
+    await writeFile(file, recording.replace('recording@2', 'recording@0'));
+    const old = await run('replay', 'tiny', '--source', 'original', '--url', port);
+    assert.equal(old.status, 1, old.output);
+    assert.match(old.output, /it is in the format angular-anything\/recording@0, not angular-anything\/recording@2/);
+    await writeFile(file, recording);
+    await writeFile(caseFile, JSON.stringify({ ...JSON.parse(testCase), noise: undefined }));
+    const masked = await run('replay', 'tiny', '--source', 'original', '--url', port);
+    assert.equal(masked.status, 1, masked.output);
+    assert.match(masked.output, /it masks values that the case does not name as noise \(step 1, DOM: html\[1\]\/body\[1\]\/main\[1\]\.attrs\.data-nonce\)/);
+  } finally {
+    await writeFile(file, recording);
+    await writeFile(caseFile, testCase);
+  }
+});
+
 test('gate passes for the same page on another origin', async () => {
   const { status, output } = await gate(port);
   assert.equal(status, 0, output);
   assert.match(output, /^angular-anything gate: PASS$/m);
-  assert.match(output, /^PASS {2}save {2}8 steps$/m);
-  assert.match(output, /its two recording runs: 8\.$/m);
+  assert.match(output, /^PASS {2}save {2}8 steps, frames: 4 4 4 379 4 4 4 4$/m);
+  assert.match(output, /^Values not compared because the case names them as noise: 8\.$/m);
   assert.match(output, /8 identical, 0 different, 0 masked\.$/m);
   assert.equal(JSON.parse(await readFile(join(root, 'reports', 'original', 'report.json'), 'utf8')).result, 'pass');
 });
@@ -332,6 +394,19 @@ test('a recording is replayed only for the suite, source and case it was made fo
     const replayed = await run('replay', 'tiny', '--source', 'original', '--url', port);
     assert.equal(replayed.status, 1, replayed.output);
     assert.match(replayed.output, /error: cannot replay against the recording: the recording has 7 steps, the case has 8/);
+    for (const [edit, message] of [
+      ['"suite": "tiny"', /it was made for suite other, source original, case save/],
+      ['"case": "save"', /it was made for suite tiny, source original, case other/],
+    ] as const) {
+      await writeFile(recorded('recording.json'), recording.replace(edit, edit.replace(/"[a-z]+"$/, '"other"')));
+      const other = await run('replay', 'tiny', '--source', 'original', '--url', port);
+      assert.equal(other.status, 1, other.output);
+      assert.match(other.output, new RegExp(`error: cannot replay against the recording: ${message.source}`));
+    }
+    await writeFile(recorded('recording.json'), 'null');
+    const nothing = await run('replay', 'tiny', '--source', 'original', '--url', port);
+    assert.equal(nothing.status, 1, nothing.output);
+    assert.match(nothing.output, /error: cannot replay against the recording: it is not a recording object, so it has to be recorded again/);
   } finally {
     await writeFile(recorded('recording.json'), recording);
   }
@@ -343,9 +418,11 @@ test('gate fails when a recording of the suite has no case any more', async () =
   try {
     const { status, output } = await gate(port);
     assert.equal(status, 1, output);
-    assert.match(output, /^PASS {2}save {5}8 steps$/m);
+    assert.match(output, /^PASS {2}save {5}8 steps, frames: 4 4 4 379 4 4 4 4$/m);
     assert.match(output, /^FAIL {2}removed\n {6}lock: the suite tiny has no case for this recording$/m);
     assert.match(output, /1 of 2 cases failed/);
+
+    assert.equal((await run('replay', 'tiny', '--source', 'original', '--url', port)).status, 0, 'replay does not look for recordings without a case');
 
     const other = JSON.parse(await readFile(join(orphan, 'recording.json'), 'utf8'));
     await writeFile(join(orphan, 'recording.json'), JSON.stringify({ ...other, suite: 'another' }));
@@ -353,6 +430,42 @@ test('gate fails when a recording of the suite has no case any more', async () =
   } finally {
     await rm(orphan, { recursive: true });
   }
+  const unreadable = join(root, 'recordings', 'original', 'notes');
+  await mkdir(unreadable);
+  try {
+    const { status, output } = await gate(port);
+    assert.equal(status, 1, output);
+    assert.match(output, /^FAIL {2}notes\n {6}lock: the suite tiny has no case for this recording$/m);
+  } finally {
+    await rm(unreadable, { recursive: true });
+  }
+});
+
+test('record removes the recording of a case that the suite no longer has and keeps those of other suites', async () => {
+  await mkdir(join(root, 'cases', 'orphan', 'save'), { recursive: true });
+  const lone = { format: 'angular-anything/case@1', id: 'save', viewport: { width: 800, height: 600 }, steps: steps.slice(0, 1) };
+  await writeFile(join(root, 'cases', 'orphan', 'save', 'case.json'), JSON.stringify(lone));
+  const first = await run('record', 'orphan', '--source', 'orphans', '--url', empty);
+  assert.equal(first.status, 0, first.output);
+  const directory = join(root, 'recordings', 'orphans');
+  await cp(join(directory, 'save'), join(directory, 'gone'), { recursive: true });
+  await cp(join(directory, 'save'), join(directory, 'foreign'), { recursive: true });
+  const foreign = JSON.parse(await readFile(join(directory, 'foreign', 'recording.json'), 'utf8'));
+  await writeFile(join(directory, 'foreign', 'recording.json'), JSON.stringify({ ...foreign, suite: 'another' }));
+  const second = await run('record', 'orphan', '--source', 'orphans', '--url', empty);
+  assert.equal(second.status, 0, second.output);
+  assert.match(second.output, /^removed the recording of "gone", the suite orphan has no such case$/m);
+  assert.equal(await exists(join(directory, 'gone')), false);
+  assert.equal(await exists(join(directory, 'foreign')), true);
+  assert.equal(await exists(join(directory, 'save', 'lock.json')), true);
+  assert.equal((await run('gate', 'orphan', '--source', 'orphans', '--url', empty)).status, 0);
+
+  await cp(join(directory, 'save'), join(directory, 'ghost'), { recursive: true });
+  const ghost = JSON.parse(await readFile(join(directory, 'ghost', 'recording.json'), 'utf8'));
+  await writeFile(join(directory, 'ghost', 'recording.json'), JSON.stringify({ ...ghost, suite: 'none' }));
+  const none = await run('record', 'none', '--source', 'orphans', '--url', empty);
+  assert.equal(none.status, 1, none.output);
+  assert.equal(await exists(join(directory, 'ghost')), true, 'a suite without cases removes nothing');
 });
 
 test('record fails a case whose page never settles or whose target is missing, and writes nothing', async () => {
@@ -360,7 +473,7 @@ test('record fails a case whose page never settles or whose target is missing, a
   assert.equal(restless.status, 1, restless.output);
   assert.match(
     restless.output,
-    /^FAIL {2}save\n {6}step 1 \(goto \/\): never settled in 300 frames: 0 requests in flight, layers still changing: accessibility, dom/m,
+    /^FAIL {2}save\n {6}step 1 \(goto \/\): never settled in 300 frames: 0 requests in flight, the last frame was not quiet: the page changed \(accessibility, DOM\)/m,
   );
   assert.match(restless.output, /Recorded 0 of 1 cases into recordings\/restless\./);
 
@@ -369,6 +482,43 @@ test('record fails a case whose page never settles or whose target is missing, a
   assert.match(missing.output, /^FAIL {2}save\n {6}step 2 \(fill textbox "Name" with "Ada"\): the target matches 0 elements$/m);
   assert.equal(await exists(join(root, 'recordings', 'restless')), false);
   assert.equal(await exists(join(root, 'recordings', 'missing')), false);
+});
+
+test('a screenshot that differs between the two runs of the original is noted, never compared and never fails the gate', async () => {
+  const pixel = await serve(
+    `<!doctype html><html lang="en"><head><title>Pixel</title></head><body><main><canvas id="c" width="16" height="16"></canvas></main><script>
+const c = document.getElementById('c').getContext('2d');
+c.fillStyle = 'rgb(' + Math.floor(Math.random() * 256) + ', ' + Math.floor(Math.random() * 256) + ', 0)';
+c.fillRect(0, 0, 16, 16);
+</script></body></html>`,
+  );
+  await mkdir(join(root, 'cases', 'pixel', 'save'), { recursive: true });
+  const lone = { format: 'angular-anything/case@1', id: 'save', viewport: { width: 800, height: 600 }, steps: steps.slice(0, 1) };
+  await writeFile(join(root, 'cases', 'pixel', 'save', 'case.json'), JSON.stringify(lone));
+  const recorded = await run('record', 'pixel', '--source', 'pixel', '--url', pixel);
+  assert.equal(recorded.status, 0, recorded.output);
+  assert.match(recorded.output, /^ {6}screenshots that differed between the two runs, at step 1$/m);
+  const recording = JSON.parse(await readFile(join(root, 'recordings', 'pixel', 'save', 'recording.json'), 'utf8'));
+  assert.deepEqual(recording.screenshotNoise, [1]);
+  const gated = await run('gate', 'pixel', '--source', 'pixel', '--url', pixel);
+  assert.equal(gated.status, 0, gated.output);
+  assert.match(gated.output, /Screenshots \(soft, they never fail the gate\): 0 identical, 0 different, 1 masked\./);
+});
+
+test('record exits 1 when one case of the suite fails, and records the others', async () => {
+  await mkdir(join(root, 'cases', 'mixed', 'fine'), { recursive: true });
+  await mkdir(join(root, 'cases', 'mixed', 'broken'), { recursive: true });
+  const fine = { format: 'angular-anything/case@1', id: 'fine', viewport: { width: 800, height: 600 }, steps: steps.slice(0, 1) };
+  await writeFile(join(root, 'cases', 'mixed', 'fine', 'case.json'), JSON.stringify(fine));
+  await writeFile(join(root, 'cases', 'mixed', 'broken', 'case.json'), JSON.stringify({ ...fine, id: 'broken', steps: steps.slice(0, 2) }));
+  const result = await run('record', 'mixed', '--source', 'mixed', '--url', empty);
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /^ok {4}fine /m);
+  assert.match(result.output, /^FAIL {2}broken\n {6}step 2 \(fill textbox "Name" with "Ada"\): the target matches 0 elements$/m);
+  assert.match(result.output, /Recorded 1 of 2 cases into recordings\/mixed\./);
+  assert.equal(await exists(join(root, 'recordings', 'mixed', 'fine', 'lock.json')), true);
+  assert.equal(await exists(join(root, 'recordings', 'mixed', 'broken')), false);
+  assert.equal((await run('gate', 'mixed', '--source', 'mixed', '--url', empty)).status, 1, 'the case that was not recorded fails the gate');
 });
 
 test('a page with an empty main passes no case', async () => {

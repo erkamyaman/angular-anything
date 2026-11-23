@@ -1,0 +1,12 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "filter-reselect",
+  "description": "A click on the selected tab",
+  "viewport": { "width": 1024, "height": 768 },
+  "steps": [
+    { "action": "goto", "path": "/" },
+    { "action": "click", "target": { "role": "tab", "name": "All" } },
+    { "action": "click", "target": { "role": "tab", "name": "Done" } },
+    { "action": "click", "target": { "role": "tab", "name": "Done" } }
+  ]
+}

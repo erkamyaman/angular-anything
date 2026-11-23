@@ -1,0 +1,14 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "toggle-under-filter",
+  "description": "A row that leaves the filtered list",
+  "viewport": { "width": 1024, "height": 768 },
+  "steps": [
+    { "action": "goto", "path": "/" },
+    { "action": "click", "target": { "role": "tab", "name": "Active" } },
+    { "action": "click", "target": { "role": "checkbox", "name": "Buy milk" } },
+    { "action": "click", "target": { "role": "tab", "name": "Done" } },
+    { "action": "click", "target": { "role": "checkbox", "name": "Write report" } },
+    { "action": "click", "target": { "role": "tab", "name": "All" } }
+  ]
+}

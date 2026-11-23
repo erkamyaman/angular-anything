@@ -1,0 +1,14 @@
+{
+  "format": "angular-anything/recording@2",
+  "suite": "fixture",
+  "case": "trim-title",
+  "source": "angularjs",
+  "url": "http://localhost:4103/",
+  "steps": 3,
+  "frames": [
+    4,
+    4,
+    4
+  ],
+  "screenshotNoise": []
+}

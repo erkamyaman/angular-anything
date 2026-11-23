@@ -1,9 +1,16 @@
 {
-  "format": "angular-anything/recording@0",
+  "format": "angular-anything/recording@2",
   "suite": "fixture",
   "case": "add-task",
   "source": "react",
   "url": "http://localhost:4101/",
   "steps": 5,
-  "masked": []
+  "frames": [
+    4,
+    4,
+    4,
+    36,
+    129
+  ],
+  "screenshotNoise": []
 }

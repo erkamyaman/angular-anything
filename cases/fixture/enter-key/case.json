@@ -1,0 +1,11 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "enter-key",
+  "description": "Add with the Enter key",
+  "viewport": { "width": 1024, "height": 768 },
+  "steps": [
+    { "action": "goto", "path": "/" },
+    { "action": "fill", "target": { "role": "textbox", "name": "New task" }, "value": "Call mom" },
+    { "action": "press", "target": { "role": "textbox", "name": "New task" }, "key": "Enter" }
+  ]
+}

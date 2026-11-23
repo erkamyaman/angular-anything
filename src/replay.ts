@@ -1,22 +1,19 @@
-import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
 import { describeStep, loadSuite } from './case.ts';
-import { compareMasked } from './compare.ts';
+import { compareCase } from './compare.ts';
 import type { Observation } from './compare.ts';
 import { checkLock, LOCK_FILE } from './lock.ts';
-import { RECORDING_FILE, stepFile, toJson, versions } from './record.ts';
+import { compile, normalize, placeholdersOutside } from './noise.ts';
+import { RECORDING_FILE, RECORDING_FORMAT, stepFile, toJson, versions } from './record.ts';
 import type { Options, Recording } from './record.ts';
 import { finish, REPORT_FORMAT, stepReport, summarize } from './report.ts';
 import type { CaseReport, Report, StepReport } from './report.ts';
 import { runCase } from './run.ts';
 
-// Replays every case of the suite against the url and compares each step with the recording.
-// With gate, a recording that does not match its lock is refused and not replayed, and a recording of this suite
-// whose case is gone fails the run.
 export async function replay({ root, suite, source, url, gate }: Options & { gate: boolean }): Promise<number> {
   const out = join(root, 'reports', source);
-  await rm(out, { recursive: true, force: true });
   const cases = await loadSuite(root, suite);
   const browser = await chromium.launch();
   try {
@@ -47,6 +44,12 @@ export async function replay({ root, suite, source, url, gate }: Options & { gat
           item.root = JSON.parse(await readFile(join(recorded, LOCK_FILE), 'utf8')).root;
         }
         const recording: Recording = JSON.parse(await readFile(join(recorded, RECORDING_FILE), 'utf8'));
+        if (typeof recording !== 'object' || recording === null) {
+          throw new Error('it is not a recording object, so it has to be recorded again');
+        }
+        if (recording.format !== RECORDING_FORMAT) {
+          throw new Error(`it is in the format ${recording.format}, not ${RECORDING_FORMAT}, so it has to be recorded again`);
+        }
         if (recording.suite !== suite || recording.source !== source || recording.case !== testCase.id) {
           throw new Error(
             `it was made for suite ${recording.suite}, source ${recording.source}, case ${recording.case}`,
@@ -55,13 +58,35 @@ export async function replay({ root, suite, source, url, gate }: Options & { gat
         if (recording.steps !== testCase.steps.length) {
           throw new Error(`the recording has ${recording.steps} steps, the case has ${testCase.steps.length}`);
         }
-        const run = await runCase(browser, testCase, url);
+        if (!Array.isArray(recording.screenshotNoise)) {
+          throw new Error('it has no list of screenshots that varied, so it has to be recorded again');
+        }
+        const frames = recording.frames;
+        if (!Array.isArray(frames)) {
+          throw new Error('it has no stored frames, so it has to be recorded again');
+        }
+        if (frames.length !== recording.steps || !frames.every((count) => Number.isInteger(count) && count > 0)) {
+          throw new Error('its stored frames are not a whole number above 0 for each step, so it has to be recorded again');
+        }
+        const noise = compile(testCase.noise ?? []);
+        const run = await runCase(browser, testCase, url, undefined, frames);
+        const expected: Observation[] = [];
+        for (const index of run.steps.keys()) {
+          expected.push(JSON.parse(await readFile(join(recorded, `${stepFile(index)}.json`), 'utf8')));
+        }
+        const outside = placeholdersOutside(noise, expected);
+        if (outside.length > 0) {
+          throw new Error(`it masks values that the case does not name as noise (${outside[0]}), so it has to be recorded again`);
+        }
+        const results = compareCase(
+          expected,
+          run.steps.map((step) => normalize(step.observation, noise)),
+        );
         for (const [index, step] of run.steps.entries()) {
           const name = stepFile(index);
-          const expected: Observation = JSON.parse(await readFile(join(recorded, `${name}.json`), 'utf8'));
-          const layers = compareMasked(expected, step.observation, recording.masked, index + 1);
+          const layers = results[index];
           let screenshot: StepReport['screenshot'] = 'masked';
-          if (!recording.masked.some((mask) => mask.step === index + 1 && mask.layer === 'screenshot')) {
+          if (!recording.screenshotNoise.includes(index + 1)) {
             const same = step.screenshot.equals(await readFile(join(recorded, `${name}.png`)));
             screenshot = same ? 'identical' : 'different';
           }
@@ -69,7 +94,7 @@ export async function replay({ root, suite, source, url, gate }: Options & { gat
             await mkdir(join(out, testCase.id), { recursive: true });
             await writeFile(join(out, testCase.id, `${name}.png`), step.screenshot);
           }
-          item.steps.push(stepReport(index + 1, describeStep(testCase.steps[index]), step, screenshot, layers));
+          item.steps.push(stepReport(index + 1, describeStep(testCase.steps[index]), step, screenshot, layers, step.unread));
         }
         item.error = run.error;
       } catch (error) {

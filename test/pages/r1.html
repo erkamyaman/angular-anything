@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Notes</title>
+<style>body{font:15px/1.4 system-ui,sans-serif;margin:20px} li{list-style:none}</style>
+</head>
+<body>
+<main>
+  <h1>Notes</h1>
+  <ul id="notes" aria-label="Notes"></ul>
+  <p>
+    <button type="button" id="add">Add note</button>
+    <button type="button" id="refresh">Refresh</button>
+    <button type="button" id="upload">Upload</button>
+    <button type="button" id="prefs">Save prefs</button>
+  </p>
+  <p id="status" role="status">idle</p>
+</main>
+<script>
+const bug = new URLSearchParams(location.search).get('bug') ?? '';
+const token = () => Array.from(crypto.getRandomValues(new Uint8Array(5)), (b) => b.toString(16).padStart(2, '0')).join('');
+const status = (text) => { document.getElementById('status').textContent = text; };
+
+let notes = [{ id: 'n1', text: 'First', done: false }];
+try {
+  const stored = JSON.parse(localStorage.getItem('notes'));
+  if (Array.isArray(stored)) notes = stored;
+} catch {}
+if (bug === 'reload-id') notes = notes.map((note) => (note.id === 'n1' ? note : { ...note, id: token() }));
+
+function save() {
+  if (bug === 'no-storage') return;
+  let out = notes;
+  if (bug === 'empty-storage') out = [];
+  if (bug === 'stored-flag') out = notes.map((note) => (note.id === 'n1' ? note : { ...note, archived: true }));
+  localStorage.setItem('notes', JSON.stringify(out));
+}
+
+function render() {
+  document.getElementById('notes').replaceChildren(...notes.map((note) => {
+    const item = document.createElement('li');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.id = 'note-' + note.id;
+    box.checked = note.done;
+    box.addEventListener('change', () => { note.done = box.checked; save(); status('toggled'); });
+    const label = document.createElement('label');
+    label.htmlFor = box.id;
+    label.textContent = note.text;
+    item.append(box, label);
+    return item;
+  }));
+}
+render();
+
+document.getElementById('add').addEventListener('click', () => {
+  const note = { id: token(), text: 'Second', done: false };
+  notes.push(note);
+  render();
+  save();
+  window.__aa?.emit('noteAdded', { id: bug === 'event-id' ? token() : note.id, text: note.text });
+  status('added');
+});
+
+document.getElementById('refresh').addEventListener('click', async () => {
+  const jobs = [];
+  if (bug !== 'get-noconfig') jobs.push(fetch('/api/config'));
+  if (bug !== 'get-none') jobs.push(fetch((bug === 'get-other' ? '/api/elsewhere' : '/api/items') + '?cb=' + token()));
+  for (const response of await Promise.all(jobs)) await response.text();
+  status('refreshed');
+});
+
+document.getElementById('upload').addEventListener('click', async () => {
+  if (bug !== 'form-nopost') {
+    const form = new FormData();
+    form.append('title', bug === 'form-field' ? 'WRONG' : 'Report');
+    if (bug === 'form-field') form.append('admin', 'yes');
+    else form.append('kind', 'pdf');
+    await (await fetch('/api/files', bug === 'form-empty' ? { method: 'POST' } : { method: 'POST', body: form })).text();
+  }
+  status('uploaded');
+});
+
+document.getElementById('prefs').addEventListener('click', () => {
+  const wrong = bug === 'prefs-below';
+  localStorage.setItem('cart', token());
+  localStorage.setItem('cart.total', wrong ? '0' : '42');
+  localStorage.setItem('cart/owner', wrong ? 'mallory' : 'ann');
+  localStorage.setItem('cart[0]', wrong ? 'gun' : 'milk');
+  localStorage.setItem('cartoon', bug === 'prefs-sibling' ? 'B' : 'A');
+  status('prefs saved');
+});
+</script>
+</body>
+</html>

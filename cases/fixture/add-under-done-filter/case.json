@@ -1,0 +1,13 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "add-under-done-filter",
+  "description": "A new task is hidden while Done is selected",
+  "viewport": { "width": 1024, "height": 768 },
+  "steps": [
+    { "action": "goto", "path": "/" },
+    { "action": "click", "target": { "role": "tab", "name": "Done" } },
+    { "action": "fill", "target": { "role": "textbox", "name": "New task" }, "value": "Call mom" },
+    { "action": "click", "target": { "role": "button", "name": "Add" } },
+    { "action": "click", "target": { "role": "tab", "name": "Active" } }
+  ]
+}

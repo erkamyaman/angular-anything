@@ -1,0 +1,11 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "details-reload",
+  "description": "The Details state is not stored",
+  "viewport": { "width": 1024, "height": 768 },
+  "steps": [
+    { "action": "goto", "path": "/" },
+    { "action": "click", "target": { "role": "button", "name": "Details" } },
+    { "action": "reload" }
+  ]
+}

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describeStep, loadSuite, parseCase, UsageError } from '../src/case.ts';
 
 const target = { role: 'textbox', name: 'New task' };
@@ -51,6 +54,8 @@ test('a broken case is rejected with the reason', () => {
     [(data) => (data.steps = []), /"steps" must hold at least one step/],
     [(data) => data.steps.shift(), /step 1 must be a "goto"/],
     [(data) => (data.steps[0].path = 'index.html'), /step 1 needs a "path" that starts with \//],
+    [(data) => (data.steps[0].path = '//example.com/'), /step 1 needs a "path" that starts with \/ and stays on the page/],
+    [(data) => (data.steps[0].path = '/\\example.com/'), /step 1 needs a "path" that starts with \/ and stays on the page/],
     [(data) => (data.steps[1].target = { role: 'textbox' }), /step 2 needs a "target" with "role" and "name"/],
     [(data) => (data.steps[1].target = '#new-task'), /step 2 needs a "target" with "role" and "name"/],
     [(data) => delete data.steps[1].value, /step 2 needs a string "value"/],
@@ -77,14 +82,49 @@ test('a broken case is rejected with the reason', () => {
   assert.throws(() => parseCase('[]', 'every-step'), /the case is not an object/);
 });
 
-test('the fixture suite loads: nine valid cases in the order of their ids', async () => {
+test('the fixture suite loads: nineteen valid cases in the order of their ids', async () => {
   const root = fileURLToPath(new URL('..', import.meta.url));
   const cases = await loadSuite(root, 'fixture');
   assert.deepEqual(
     cases.map((loaded) => loaded.case.id),
-    ['add-empty', 'add-reload', 'add-task', 'delete-task', 'details', 'filter-tabs', 'initial-render', 'load-suggestions', 'toggle-task'],
+    [
+      'add-empty',
+      'add-reload',
+      'add-task',
+      'add-twice',
+      'add-under-done-filter',
+      'delete-reload',
+      'delete-task',
+      'details',
+      'details-reload',
+      'enter-key',
+      'filter-reselect',
+      'filter-tabs',
+      'id-after-delete',
+      'initial-render',
+      'load-suggestions',
+      'load-twice',
+      'toggle-task',
+      'toggle-under-filter',
+      'trim-title',
+    ],
   );
   for (const loaded of cases) assert.match(loaded.sha256, /^[0-9a-f]{64}$/);
   await assert.rejects(loadSuite(root, 'no-such-suite'), UsageError);
   await assert.rejects(loadSuite(root, '../cases'), UsageError);
+});
+
+test('a case folder that is a symbolic link is refused by name', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-case-'));
+  try {
+    const body = JSON.stringify({ ...valid, id: 'shared', steps: [valid.steps[0]] });
+    await mkdir(join(root, 'cases', 'tiny', 'real'), { recursive: true });
+    await writeFile(join(root, 'cases', 'tiny', 'real', 'case.json'), body.replace('shared', 'real'));
+    await mkdir(join(root, 'other', 'shared'), { recursive: true });
+    await writeFile(join(root, 'other', 'shared', 'case.json'), body);
+    await symlink(join(root, 'other', 'shared'), join(root, 'cases', 'tiny', 'shared'));
+    await assert.rejects(loadSuite(root, 'tiny'), /cases\/tiny\/shared is a symbolic link, a case is a folder of its own/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

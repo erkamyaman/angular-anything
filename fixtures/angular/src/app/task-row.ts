@@ -8,10 +8,9 @@ export interface Task {
 }
 
 @Component({
-  selector: 'li[appTaskRow]',
+  selector: 'li.task',
   encapsulation: ViewEncapsulation.None,
   host: {
-    class: 'task',
     '[class.is-done]': "task().done && bug !== 'missing-class'",
   },
   template: `
@@ -21,7 +20,7 @@ export interface Task {
   `,
 })
 export class TaskRow {
-  readonly task = input.required<Task>({ alias: 'appTaskRow' });
+  readonly task = input.required<Task>();
   readonly taskToggled = output<{ id: number; done: boolean }>();
   readonly taskDeleted = output<{ id: number }>();
 

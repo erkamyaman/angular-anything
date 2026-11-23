@@ -2058,10 +2058,28 @@
     "requests": [],
     "gets": [],
     "storage": {
-      "tasks": "[{\"id\":2,\"title\":\"Write report\",\"done\":true}]"
+      "tasks": [
+        {
+          "id": 2,
+          "title": "Write report",
+          "done": true,
+          "$order": [
+            "id",
+            "title",
+            "done"
+          ]
+        }
+      ]
     },
-    "url": "/",
+    "url": {
+      "path": [
+        ""
+      ],
+      "query": {},
+      "fragment": ""
+    },
     "title": "Tasks",
-    "focus": "html[1]/body[1]/div[1]/main[1]/form[1]/input[1]"
+    "focus": "html[1]/body[1]/div[1]/main[1]/form[1]/input[1]",
+    "popups": []
   }
 }
