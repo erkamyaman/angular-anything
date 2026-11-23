@@ -327,6 +327,8 @@ Done when:
 
 ## Step 5: the remaining Round 5 rules (Q33, Q37, Q38, Q71 to Q80)
 
+Deferred by the maintainer's decision of 2026-11-22: step 5 is not built in this milestone's first pass. Steps 2, 3 and 4 are built and reviewed together in one round, step 6 measures what then exists, and the TodoMVC trial port decides which parts of step 5 are built next. Step 6 lists every part of step 5 under "Not covered".
+
 Three parts, built in this order: the network tape, geometry in the same session, secrets.
 
 ### 5a: the network tape (Q37, Q74 to Q77)
