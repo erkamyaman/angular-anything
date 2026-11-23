@@ -70,3 +70,14 @@ test('the summary names the first failing step, the layers that differ and the s
   assert.match(text, /^1 of 1 cases failed\. 1 of 2 compared steps differ\.$/m);
   assert.match(text, /1 identical, 1 different, 0 masked\./);
 });
+
+test('a URL that is shown as parts is also written out, for a window, a request and the page', () => {
+  const read = (expected: unknown, actual: unknown) =>
+    summarize(finish(report([item([stepReport(1, 'click', timing, 'identical', layers({ effects: [{ path: 'popups[0]', expected, actual }] }))])])));
+  const open = { kind: 'open', url: { path: [''], query: { popup: ['1'] }, fragment: '' }, target: '_blank', features: '' };
+  assert.match(read(open, undefined), /expected: \{"kind":"open".*\} \(the URL \/\?popup=1\)$/m);
+  assert.match(read(undefined, { url: { path: ['api', 'items', 'a%2Fb'], query: { tag: ['x', 'y'], q: ['1'] }, origin: 'http://other.test' }, method: 'GET' }), /actual: .*\(the URL http:\/\/other\.test\/api\/items\/a%2Fb\?tag=x&tag=y&q=1\)$/m);
+  assert.match(read({ path: ['a', 'b'], query: {}, fragment: 'top' }, 5), /expected: .* \(the URL \/a\/b#top\)$/m);
+  assert.doesNotMatch(read({ kind: 'alert', message: 'hi' }, undefined), /the URL/);
+  assert.doesNotMatch(read({ path: 'x', query: 'y' }, 5), /the URL/);
+});

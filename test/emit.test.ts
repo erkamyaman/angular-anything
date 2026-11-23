@@ -76,3 +76,46 @@ test('events that hold other entries, numbers or undefined differ, and a key wit
   assert.equal(await same('{ a: 1, b: undefined }', '{ a: 1 }'), true, 'a key with undefined against a missing key');
   assert.equal(await same('{ a: 1, b: undefined }', '{ a: 1, b: null }'), false, 'undefined against null');
 });
+
+test('a value that JSON cannot hold is marked where it is, and the other fields of the payload stay', async () => {
+  const payload = async (expression: string) => (await emitted(`window.__aa.emit('x', ${expression})`))[0];
+  const same = async (a: string, b: string) => eventDifferences([await payload(a)], [await payload(b)]).length === 0;
+  assert.deepEqual((await payload("{ id: 10n, name: 'a' }")).payload, { id: { $aa: 'bigint', value: '10' }, name: 'a' });
+  assert.equal(await same("{ id: 10n, name: 'a' }", "{ id: 10n, name: 'b' }"), false, 'another field next to a BigInt');
+  assert.equal(await same('{ id: 10n }', '{ id: 11n }'), false, 'another BigInt');
+  assert.equal(await same('{ id: 10n }', '{ id: 10n }'), true);
+  assert.equal(await same('{ id: 10n }', '{ id: 10 }'), false, 'a BigInt against a number');
+  const circular = (value: number) => `(() => { const x = { a: ${value}, list: [1] }; x.self = x; x.list.push(x); return x; })()`;
+  assert.deepEqual((await payload(circular(1))).payload, {
+    a: 1,
+    list: [1, { $aa: 'circular' }],
+    self: { $aa: 'circular' },
+  });
+  assert.equal(await same(circular(1), circular(2)), false, 'another field of a circular payload');
+  assert.equal(await same(circular(1), circular(1)), true);
+  assert.equal(await same("{ el: document.body, n: 1 }", "{ el: document.body, n: 2 }"), false, 'an element next to a field');
+  assert.deepEqual((await payload('(() => { const s = new Set(); s.add(s); return { s, n: 1 }; })()')).payload, {
+    s: { $aa: 'Set', values: [{ $aa: 'circular' }] },
+    n: 1,
+  });
+  assert.deepEqual((await payload('(() => { const a = { n: 1 }; return { x: a, y: a }; })()')).payload, { x: { n: 1 }, y: { n: 1 } }, 'one object twice is no cycle');
+});
+
+test('an Error, a RegExp, a negative zero and a hole in a list are told apart', async () => {
+  const payload = async (expression: string) => (await emitted(`window.__aa.emit('x', ${expression})`))[0];
+  const same = async (a: string, b: string) => eventDifferences([await payload(a)], [await payload(b)]).length === 0;
+  assert.deepEqual((await payload("{ e: new TypeError('a') }")).payload, { e: { $aa: 'Error', name: 'TypeError', message: 'a' } });
+  assert.equal(await same("{ e: new Error('a') }", "{ e: new Error('b') }"), false, 'the message of an error');
+  assert.equal(await same("{ e: new Error('a') }", "{ e: new TypeError('a') }"), false, 'the name of an error');
+  assert.equal(await same("{ e: new Error('a') }", "{ e: new Error('a') }"), true);
+  assert.equal(await same('{ r: /a/g }', '{ r: /a/i }'), false, 'the flags of a pattern');
+  assert.equal(await same('{ r: /a/g }', '{ r: /b/g }'), false, 'the source of a pattern');
+  assert.equal(await same('{ r: /a/g }', '{ r: /a/g }'), true);
+  assert.equal(await same('{ n: -0 }', '{ n: 0 }'), false, 'negative zero against zero');
+  assert.equal(await same('{ n: -0 }', '{ n: -0 }'), true);
+  assert.equal(await same('{ n: [0, -0] }', '{ n: [0, 0] }'), false);
+  assert.equal(await same('{ l: [1, , 3] }', '{ l: [1, undefined, 3] }'), false, 'a hole against undefined');
+  assert.equal(await same('{ l: [1, , 3] }', '{ l: [1, null, 3] }'), false, 'a hole against null');
+  assert.equal(await same('{ l: [1, , 3] }', '{ l: [1, , 3] }'), true);
+  assert.equal(await same('{ l: [1, 2, 3] }', '{ l: [1, 2, 3] }'), true);
+});

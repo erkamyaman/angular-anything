@@ -672,3 +672,134 @@ test('script, style and link elements are no part of the canonical DOM, wherever
   assert.equal(await same('<div><p>x</p></div>', `<div>${ignored}<p>x</p></div>`), true, 'in a div');
   assert.equal(await same('<p>x</p>', '<p>x</p><template>y</template>'), false, 'a template element is content');
 });
+
+test('text around each kind of box: a space next to a box that is drawn is kept, next to a box that is out of flow it is not', async () => {
+  const around = async (element: string) => {
+    const body = (await dom(`<section>a ${element} b</section>`)) as { children: { children: { children: unknown[] }[] }[] };
+    const [first, , last] = body.children[0].children[0].children;
+    return [first, last];
+  };
+  for (const out of [
+    '<span style="float: left">x</span>',
+    '<span style="float: right">x</span>',
+    '<span style="position: absolute">x</span>',
+    '<span style="position: fixed">x</span>',
+  ]) {
+    assert.deepEqual(await around(out), ['a ', 'b'], out);
+  }
+  for (const atom of [
+    '<span style="display: inline-block">x</span>',
+    '<span style="display: inline-flex">x</span>',
+    '<span style="display: inline-grid">x</span>',
+    '<img alt="x">',
+    '<canvas></canvas>',
+    '<video></video>',
+    '<iframe></iframe>',
+    '<object></object>',
+    '<embed>',
+    '<audio controls></audio>',
+    '<math></math>',
+    '<svg></svg>',
+  ]) {
+    assert.deepEqual(await around(atom), ['a ', ' b'], atom);
+  }
+  assert.deepEqual(await around('<span style="display: contents">x</span>'), ['a ', ' b'], 'contents belongs to the line');
+  assert.deepEqual(await around('<ruby>x<rt>y</rt></ruby>'), ['a ', ' b'], 'ruby belongs to the line');
+  assert.deepEqual(await around('<div>x</div>'), ['a', 'b'], 'a block ends the line');
+  assert.deepEqual(await around('<span style="display: none">x</span>'), ['a ', 'b']);
+});
+
+test('text inside SVG: a nested svg is a block of its own, an a inside text is part of the text, and break-spaces is kept', async () => {
+  const [outer] = find(await dom('<svg><text>a</text><svg></svg> <svg></svg><text>b</text></svg>'), 'svg');
+  assert.deepEqual(
+    (outer.children ?? []).map((child) => (typeof child === 'string' ? child : child.tag)),
+    ['text', 'svg', 'svg', 'text'],
+    'the space between two nested svg elements is not text',
+  );
+  const [text] = find(await dom('<svg><text>a <a>b</a> c</text></svg>'), 'text');
+  assert.deepEqual(text.children, ['a ', { tag: 'a', children: ['b'] }, ' c']);
+  const spaces = '<p style="white-space: break-spaces">a  b </p>';
+  assert.deepEqual(find(await dom(spaces), 'p')[0].children, ['a  b ']);
+  assert.equal(await differ(spaces, '<p style="white-space: break-spaces">a b</p>'), true);
+});
+
+test('the box of an element is captured to two decimals', async () => {
+  const captured = await capture('<div style="margin: 0; width: 100.5px; height: 20.25px; position: absolute; left: 0.5px; top: 10.75px"></div>');
+  assert.deepEqual(captured.style['html[1]/body[1]/div[1]'].box, { x: 0.5, y: 10.75, width: 100.5, height: 20.25 });
+});
+
+test('AngularJS: a directive counts only in the forms its restrict allows', async () => {
+  const modules = `
+    .directive('badge', () => ({ restrict: 'E', scope: { label: '<' } }))
+    .directive('tip', () => ({ restrict: 'A', scope: { text: '<' } }))
+    .directive('plain', () => ({ restrict: 'A', scope: { kind: '<' } }))
+    .directive('boxed', () => ({ restrict: 'C', scope: { size: '<' } }))
+    .directive('wide', () => ({ restrict: 'E', scope: { width: '<' } }))`;
+  const markup = `
+    <p id="a" badge label="L">x</p>
+    <tip id="b" text="T">x</tip>
+    <p id="c" class="plain" kind="K">x</p>
+    <p id="d" class="boxed" size="3">x</p>
+    <p id="e" wide width="9">x</p>
+    <wide id="f" width="9"></wide>`;
+  const tree = await dom('<div id="root"></div>', ajs(markup, modules));
+  const byId = (id: string) => [...find(tree, 'p'), ...find(tree, 'tip'), ...find(tree, 'wide')].find((node) => node.attrs?.id === id)!.attrs;
+  assert.deepEqual(byId('a'), { badge: '', id: 'a', label: 'L' }, 'an element directive is not active as an attribute');
+  assert.deepEqual(byId('b'), { id: 'b', text: 'T' }, 'an attribute directive is not active as an element');
+  assert.deepEqual(byId('c'), { class: 'plain', id: 'c', kind: 'K' }, 'an attribute directive is not active as a class');
+  assert.deepEqual(byId('d'), { class: 'boxed', id: 'd' }, 'a class directive reads its bindings');
+  assert.deepEqual(byId('e'), { id: 'e', wide: '', width: '9' });
+  assert.deepEqual(byId('f'), { id: 'f' }, 'an element directive reads its bindings');
+});
+
+test('AngularJS: an attribute that one directive reads as text and another as an expression is dropped', async () => {
+  for (const scope of ["{ a: '<title', b: '@title' }", "{ a: '@title', b: '<title' }"]) {
+    const modules = `.directive('probe', () => ({ restrict: 'A', scope: ${scope} }))`;
+    const [p] = find(await dom('<div id="root"></div>', ajs('<p probe title="T">x</p>', modules)), 'p');
+    assert.deepEqual(p.attrs, undefined, scope);
+  }
+  const text = `.directive('probe', () => ({ restrict: 'A', scope: { a: '@title' } }))`;
+  assert.deepEqual(find(await dom('<div id="root"></div>', ajs('<p probe title="T">x</p>', text)), 'p')[0].attrs, { title: 'T' });
+});
+
+test('AngularJS: every spelling of a directive name is read, with x, data, a colon, a dash or an underscore', async () => {
+  const modules = `.directive('myProbe', () => ({ restrict: 'A' })).directive('probe', () => ({ restrict: 'A' }))`;
+  const names = ['my-probe', 'my:probe', 'my_probe', 'x-my-probe', 'x:my:probe', 'x_my_probe', 'data-my-probe', 'data:my:probe', 'data_my_probe', 'x-probe', 'data-probe', 'probe'];
+  const markup = names.map((name) => `<p ${name}="1" id="${name.replace(/[^a-z]/g, '')}${names.indexOf(name)}">x</p>`).join('');
+  const tree = await dom('<div id="root"></div>', ajs(markup, modules));
+  for (const p of find(tree, 'p')) assert.deepEqual(Object.keys(p.attrs ?? {}), ['id'], `${p.attrs?.id} keeps only its id`);
+  assert.equal(find(tree, 'p').length, names.length);
+});
+
+test('AngularJS: a directive named like a method of the element does not make the attribute read by the browser', async () => {
+  const modules = `.directive('focus', () => ({ restrict: 'A' })).directive('click', () => ({ restrict: 'A' })).directive('remove', () => ({ restrict: 'A' })).directive('scroll', () => ({ restrict: 'A' }))`;
+  const tree = await dom('<div id="root"></div>', ajs('<input focus="1" name="n"><button click="a" remove="b" scroll="c" title="t">b</button>', modules));
+  assert.deepEqual(find(tree, 'input')[0].attrs, { name: 'n' });
+  assert.deepEqual(find(tree, 'button')[0].attrs, { title: 't' });
+});
+
+test('AngularJS: itemscope, exportparts, is and the SVG presentation attributes are read by the browser', async () => {
+  const modules = `.directive('probe', () => ({
+    restrict: 'A',
+    scope: { a: '@itemscope', b: '@exportparts', c: '@is', d: '@stroke', e: '@opacity', f: '@textAnchor', g: '@fontSize' },
+  }))`;
+  const tree = await dom(
+    '<div id="root"></div>',
+    ajs('<div probe itemscope exportparts="x" is="y">d</div><svg><text probe stroke="red" opacity=".5" text-anchor="middle" font-size="9">t</text></svg>', modules),
+  );
+  assert.deepEqual(find(tree, 'div')[1].attrs, { exportparts: 'x', is: 'y', itemscope: '' });
+  assert.deepEqual(find(tree, 'text')[0].attrs, { 'font-size': '9', opacity: '.5', stroke: 'red', 'text-anchor': 'middle' });
+});
+
+test('an element named angular that is no framework does not break the capture', async () => {
+  const captured = await capture('<script>window.angular = { element: 5 }</script><p>x</p>');
+  assert.deepEqual(find(captured.dom, 'p')[0].children, ['x']);
+});
+
+test('under pre-line a space is removed before a line break that starts the next text node, and not before text that ends with one', async () => {
+  const preLine = '<style>section { white-space: pre-line }</style>';
+  assert.equal(await same(`${preLine}<section><span>a </span><span>\nb</span></section>`, `${preLine}<section><span>a</span><span>\nb</span></section>`), true);
+  assert.equal(await same(`${preLine}<section><span>a </span><b> \nb</b></section>`, `${preLine}<section><span>a</span><b>\nb</b></section>`), true);
+  assert.equal(await differ(`${preLine}<section><b>a </b><b>x\n</b></section>`, `${preLine}<section><b>a</b><b>x\n</b></section>`), true, 'the space is before x');
+  assert.equal(await same('<section><span>a </span><span style="white-space: pre">\nb</span></section>', '<section><span>a</span><span style="white-space: pre">\nb</span></section>'), true);
+});

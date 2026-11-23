@@ -160,3 +160,15 @@ for (const [page, bug, name, expected] of ports) {
     assert.equal(status, expected, output);
   });
 }
+
+test('record lists a noise entry whose value was the same in both runs, and still records it', async () => {
+  const folder = join(root, 'cases', 'agree', 'agree');
+  await mkdir(folder, { recursive: true });
+  const keep = JSON.parse(await readFile(join(root, 'cases', 'keep', 'keep', 'case.json'), 'utf8'));
+  const agree = { ...keep, id: 'agree', noise: [...keep.noise, { layer: 'effects', path: 'storage.lang' }] };
+  await writeFile(join(folder, 'case.json'), JSON.stringify(agree));
+  const recorded = await run('record', 'agree', '--source', 'agree', '--url', urls.notes);
+  assert.equal(recorded.status, 0, recorded.output);
+  assert.match(recorded.output, /^ {6}noise entry without a difference between the two runs: effects storage\.lang$/m);
+  assert.equal((recorded.output.match(/without a difference between the two runs/g) ?? []).length, 1, 'only the entry that agreed is listed');
+});

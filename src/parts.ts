@@ -16,6 +16,22 @@ export const NUMBER = 'number';
 const reserved = /^\$+(aa|order)$/;
 const safeKey = (key: string): string => (reserved.test(key) ? `$${key}` : key);
 
+const canonicalNumber = (text: string): string | undefined => {
+  const match = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(text);
+  if (!match) return undefined;
+  const fraction = match[3] ?? '';
+  const digits = (match[2] + fraction).replace(/^0+/, '');
+  if (digits === '') return '0';
+  const trimmed = digits.replace(/0+$/, '');
+  const exponent = Number(match[4] ?? 0) - fraction.length + (digits.length - trimmed.length);
+  return `${match[1]}${trimmed}e${exponent}`;
+};
+
+const keepsDigits = (value: number, source: string): boolean => {
+  const written = canonicalNumber(source);
+  return written !== undefined && written !== canonicalNumber(JSON.stringify(value));
+};
+
 export const isNumberNode = (value: unknown): value is { $aa: 'number'; source: string } =>
   typeof value === 'object' && value !== null && (value as { $aa?: unknown }).$aa === NUMBER;
 
@@ -25,7 +41,9 @@ export function expandJson(text: string, ordered: boolean): unknown {
     parsed = JSON.parse(text, function (_key: string, value: unknown, context?: { source?: string }) {
       if (typeof value === 'number') {
         const source = context?.source;
-        return ordered && source !== undefined && JSON.stringify(value) !== source ? { $aa: NUMBER, source } : value;
+        if (source === undefined) return value;
+        if (ordered) return JSON.stringify(value) !== source ? { $aa: NUMBER, source } : value;
+        return keepsDigits(value, source) ? { $aa: NUMBER, source: canonicalNumber(source)! } : value;
       }
       if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
       const keys = Object.keys(value);
@@ -52,7 +70,39 @@ export function fieldsOf(pairs: Iterable<[string, string]>): Fields {
   return Object.fromEntries(grouped);
 }
 
-export const queryFields = (search: string): Fields => fieldsOf(new URLSearchParams(search));
+const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+
+function formDecoded(text: string): string {
+  const bytes: number[] = [];
+  const raw = text.replace(/\+/g, ' ');
+  for (let at = 0; at < raw.length; ) {
+    const hex = raw[at] === '%' ? /^[0-9a-fA-F]{2}$/.exec(raw.slice(at + 1, at + 3)) : null;
+    if (hex) {
+      bytes.push(parseInt(hex[0], 16));
+      at += 3;
+    } else {
+      const point = raw.codePointAt(at)!;
+      bytes.push(...Buffer.from(String.fromCodePoint(point), 'utf8'));
+      at += point > 0xffff ? 2 : 1;
+    }
+  }
+  const buffer = Buffer.from(bytes);
+  try {
+    return decoder.decode(buffer);
+  } catch {
+    return `base64:${buffer.toString('base64')}`;
+  }
+}
+
+export function queryFields(search: string): Fields {
+  const pairs: [string, string][] = [];
+  for (const piece of search.replace(/^\?/, '').split('&')) {
+    if (piece === '') continue;
+    const at = piece.indexOf('=');
+    pairs.push(at < 0 ? [formDecoded(piece), ''] : [formDecoded(piece.slice(0, at)), formDecoded(piece.slice(at + 1))]);
+  }
+  return fieldsOf(pairs);
+}
 
 function decoded(segment: string): string {
   try {

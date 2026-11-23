@@ -95,10 +95,20 @@ export function finish(report: Report): Report {
   return report;
 }
 
+function urlText(value: unknown): string | undefined {
+  if (!isObject(value) || !Array.isArray(value.path) || !isObject(value.query)) return undefined;
+  const query = Object.entries(value.query).flatMap(([name, values]) => (Array.isArray(values) ? values : []).map((each) => `${name}=${each}`));
+  const origin = typeof value.origin === 'string' ? value.origin : '';
+  const fragment = typeof value.fragment === 'string' && value.fragment !== '' ? `#${value.fragment}` : '';
+  return `${origin}/${value.path.join('/')}${query.length > 0 ? `?${query.join('&')}` : ''}${fragment}`;
+}
+
 function show(value: unknown): string {
   if (value === undefined) return 'nothing';
   const text = JSON.stringify(value);
-  return text.length > 300 ? `${text.slice(0, 300)}...` : text;
+  const shown = text.length > 300 ? `${text.slice(0, 300)}...` : text;
+  const url = urlText(value) ?? (isObject(value) ? urlText(value.url) : undefined);
+  return url === undefined ? shown : `${shown} (the URL ${url})`;
 }
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;

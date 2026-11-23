@@ -57,12 +57,44 @@ export function initPage(): void {
     emit(name: string, payload: unknown) {
       let json: string;
       try {
-        json = JSON.stringify({ name, payload: payload ?? null }, function (this: unknown, _key, value: unknown) {
-          if (value === undefined) return Array.isArray(this) ? { $aa: 'undefined' } : undefined;
-          if (typeof value === 'number' && !Number.isFinite(value)) return { $aa: String(value) };
-          if (value instanceof Set) return { $aa: 'Set', values: [...value] };
-          if (value instanceof Map) return { $aa: 'Map', entries: [...value] };
-          return value;
+        const holders: unknown[] = [];
+        const originals: unknown[] = [];
+        json = JSON.stringify({ name, payload: payload ?? null }, function (this: unknown, key, value: unknown) {
+          while (holders.length > 0 && holders[holders.length - 1] !== this) {
+            holders.pop();
+            originals.pop();
+          }
+          const isObject = typeof value === 'object' && value !== null;
+          let result: unknown = value;
+          if (isObject && originals.includes(value)) {
+            result = { $aa: 'circular' };
+            holders.push(result);
+            originals.push(result);
+            return result;
+          }
+          if (value === undefined) {
+            if (!Array.isArray(this)) return undefined;
+            result = key in this ? { $aa: 'undefined' } : { $aa: 'hole' };
+          } else if (typeof value === 'bigint') {
+            result = { $aa: 'bigint', value: String(value) };
+          } else if (typeof value === 'number' && !Number.isFinite(value)) {
+            result = { $aa: String(value) };
+          } else if (Object.is(value, -0)) {
+            result = { $aa: '-0' };
+          } else if (value instanceof Set) {
+            result = { $aa: 'Set', values: [...value] };
+          } else if (value instanceof Map) {
+            result = { $aa: 'Map', entries: [...value] };
+          } else if (value instanceof Error) {
+            result = { $aa: 'Error', name: value.name, message: value.message };
+          } else if (value instanceof RegExp) {
+            result = { $aa: 'RegExp', source: value.source, flags: value.flags };
+          }
+          if (typeof result === 'object' && result !== null) {
+            holders.push(result);
+            originals.push(isObject ? value : result);
+          }
+          return result;
         });
       } catch {
         json = JSON.stringify({ name, payload: '[unserializable]' });
@@ -416,7 +448,12 @@ export function capturePage(): PageCapture {
     let known = properties.get(key);
     if (!known) {
       known = new Map();
-      for (const name in el) known.set(name.toLowerCase(), name);
+      for (let object: object | null = el; object && object !== Object.prototype; object = Object.getPrototypeOf(object)) {
+        for (const name of Object.getOwnPropertyNames(object)) {
+          const descriptor = Object.getOwnPropertyDescriptor(object, name)!;
+          if (descriptor.enumerable && typeof descriptor.value !== 'function') known.set(name.toLowerCase(), name);
+        }
+      }
       properties.set(key, known);
     }
     return known;
@@ -556,7 +593,7 @@ export function capturePage(): PageCapture {
         let value = values[index];
         const collapsible = token.collapse !== 'preserve' && token.collapse !== 'break-spaces';
         if (collapsible && end && value.endsWith(' ')) value = value.slice(0, -1);
-        if (value !== '') end = value.endsWith('\n');
+        if (value !== '') end = value.startsWith('\n');
         texts.set(token.node, value);
       }
     }

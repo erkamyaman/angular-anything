@@ -444,3 +444,53 @@ test('the printed form of every path is accepted by the case as it is', () => {
     });
   });
 });
+
+test('a noise path can name a boolean, a stored number and a text, and the audit lists none of them as a problem', () => {
+  const flag = (value: boolean): Observation => {
+    const result = blank();
+    result.events = [{ name: 'e', payload: { flag: value } }];
+    return result;
+  };
+  const flagNoise: Noise[] = [{ layer: 'events', path: '[0].payload.flag' }];
+  const flags = record(flagNoise, [flag(true)], [flag(false)]);
+  assert.deepEqual(flags.audited.problems, []);
+  assert.deepEqual(flags.observations[0].events[0].payload, { flag: { $aa: 'noise', kind: 'boolean' } });
+  assert.deepEqual(paths(gate(flagNoise, flags.observations, [flag(false)])[0].events), []);
+  assert.deepEqual(paths(gate(flagNoise, flags.observations, [(() => { const o = flag(true); o.events[0].payload = { flag: 'true' }; return o; })()])[0].events), ['[0].payload.flag']);
+
+  const priced = record([effects('storage.cart.price')], [withStorage({ cart: '{"price":1.10}' })], [withStorage({ cart: '{"price":2.20}' })]);
+  assert.deepEqual(priced.audited.problems, [], 'a number that is written as it is counts as a number');
+  assert.deepEqual(priced.observations[0].effects.storage.cart, { price: { $aa: 'noise', kind: 'number' } });
+});
+
+test('a noise path never reaches into the order of the keys of a stored value, or into the parts of a number', () => {
+  const stored = withStorage({ cart: '{"a":1.10,"b":2}' });
+  for (const path of ['storage.cart.$order[0]', 'storage.cart.$order', 'storage.cart.a.source', 'storage.cart.a.$aa']) {
+    const { audited } = record([effects(path)], [stored], [stored]);
+    assert.deepEqual(audited.problems, [`the noise entry side effects ${path} matches nothing in any step`], path);
+  }
+});
+
+test('a placeholder on the port is not a masked value, and an inherited mask does not tie a child twice', () => {
+  const holder = (value: unknown): Observation => {
+    const result = blank();
+    result.events = [{ name: 'e', payload: { value } }];
+    return result;
+  };
+  const mask = { $aa: 'noise', kind: 'string' };
+  assert.deepEqual(paths(compareCase([holder(mask)] as never, [holder(mask)])[0].events.differences), ['[0].payload.value']);
+
+  const styled = (color: string, childColor?: string): Observation => {
+    const result = blank();
+    result.style = {
+      'html[1]': { style: { color, display: 'block' } },
+      'html[1]/body[1]': { style: childColor === undefined ? {} : { color: childColor } },
+    };
+    return result;
+  };
+  const noise: Noise[] = [{ layer: 'style', path: 'html[1].style.color' }];
+  const { observations } = record(noise, [styled('rgb(1, 1, 1)'), styled('rgb(1, 1, 1)')], [styled('rgb(2, 2, 2)'), styled('rgb(2, 2, 2)')]);
+  const result = gate(noise, observations, [styled('rgb(9, 9, 9)', 'rgb(5, 5, 5)'), styled('rgb(9, 9, 9)')]);
+  assert.deepEqual(paths(result[0].style), ['html[1]/body[1].style.color'], 'one difference, not two');
+  assert.deepEqual(paths(result[1].style), []);
+});
