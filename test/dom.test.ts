@@ -394,7 +394,7 @@ test('style is compared as the declarations the browser parsed', async () => {
   assert.equal(await differ('<p>x</p>', '<p style="color: red">x</p>'), true, 'a missing attribute');
   const node = (await dom('<p style="color: red; margin: 0 !important">x</p>')) as { children: { children: { inline: unknown; attrs?: unknown }[] }[] };
   const p = node.children[0].children[0];
-  assert.deepEqual(p.inline, { color: 'red', 'margin-top': '0px !important', 'margin-right': '0px !important', 'margin-bottom': '0px !important', 'margin-left': '0px !important' });
+  assert.deepEqual(p.inline, { color: '#ff0000', 'margin-top': '0px !important', 'margin-right': '0px !important', 'margin-bottom': '0px !important', 'margin-left': '0px !important' });
   assert.equal(p.attrs, undefined);
 });
 
@@ -802,4 +802,21 @@ test('under pre-line a space is removed before a line break that starts the next
   assert.equal(await same(`${preLine}<section><span>a </span><b> \nb</b></section>`, `${preLine}<section><span>a</span><b>\nb</b></section>`), true);
   assert.equal(await differ(`${preLine}<section><b>a </b><b>x\n</b></section>`, `${preLine}<section><b>a</b><b>x\n</b></section>`), true, 'the space is before x');
   assert.equal(await same('<section><span>a </span><span style="white-space: pre">\nb</span></section>', '<section><span>a</span><span style="white-space: pre">\nb</span></section>'), true);
+});
+
+test('a colour in a style attribute compares as the colour the browser reads, however it is written', async () => {
+  const colour = (value: string) => `<p style="${value}">x</p>`;
+  assert.equal(await same(colour('color: red'), colour('color: #f00')), true, 'a keyword against short hex');
+  assert.equal(await same(colour('color: red'), colour('color: rgb(255, 0, 0)')), true, 'a keyword against rgb');
+  assert.equal(await same(colour('color: #ff0000'), colour('color: hsl(0 100% 50%)')), true, 'hex against hsl');
+  assert.equal(await same(colour('border: 1px solid red'), colour('border: 1px solid #ff0000')), true, 'inside a shorthand');
+  assert.equal(await same(colour('fill: red'), colour('fill: #f00')), true, 'fill');
+  assert.equal(await same(colour('color: rgba(255, 0, 0, 0.5)'), colour('color: #ff000080')), true, 'with alpha');
+  assert.equal(await differ(colour('color: red'), colour('color: #fe0000')), true, 'another colour');
+  assert.equal(await differ(colour('color: red'), colour('color: red !important')), true, 'the priority still counts');
+  assert.equal(await differ(colour('color: currentcolor'), colour('color: black')), true, 'currentcolor stays as written');
+  assert.equal(await differ(colour('animation-name: red'), colour('animation-name: Red')), true, 'a name that looks like a colour is no colour');
+  assert.equal(await differ(colour('color: inherit'), colour('color: red')), true, 'a keyword of CSS stays as written');
+  assert.equal(await differ(colour('--c: red'), colour('--c: #f00')), true, 'a custom property is compared as written');
+  assert.equal(await differ(colour('color: var(--c, red)'), colour('color: var(--c, #f00)')), true, 'a var() is compared as written');
 });

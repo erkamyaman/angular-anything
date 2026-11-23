@@ -412,6 +412,20 @@ export function capturePage(): PageCapture {
       }
     });
 
+  let paint: CanvasRenderingContext2D | null | undefined;
+  const colourOf = (property: string, value: string): string => {
+    if (property.startsWith('--') || /^currentcolor$/i.test(value) || !CSS.supports(property, '#ff0000')) return value;
+    paint ??= document.createElement('canvas').getContext('2d');
+    if (!paint) return value;
+    const read = (sentinel: string) => {
+      paint!.fillStyle = sentinel;
+      paint!.fillStyle = value;
+      return paint!.fillStyle;
+    };
+    const first = read('#000001');
+    return first === read('#000002') ? first : value;
+  };
+
   const angularjsName = (attribute: string) =>
     attribute.replace(/^(x|data)[:\-_]/i, '').replace(/[:\-_]+(.)/g, (_, letter: string) => letter.toUpperCase());
 
@@ -628,7 +642,7 @@ export function capturePage(): PageCapture {
     if (declared) {
       for (const property of declared) {
         const priority = declared.getPropertyPriority(property);
-        inline[property] = inlineUrls(declared.getPropertyValue(property)) + (priority ? ` !${priority}` : '');
+        inline[property] = colourOf(property, inlineUrls(declared.getPropertyValue(property))) + (priority ? ` !${priority}` : '');
       }
     }
 
