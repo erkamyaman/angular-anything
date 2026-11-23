@@ -199,3 +199,57 @@ test('a text part with bytes that are not UTF-8 is compared by its bytes, and a 
   assert.deepEqual(Object.keys(unicode.fields), ['näme']);
   assert.equal(unicode.fields['näme'][0].content, 'välue');
 });
+
+test('a percent sequence that is not UTF-8 is kept as bytes, so another byte is a difference', () => {
+  const query = (search: string) => urlParts(`http://localhost:4104/a${search}`, base, 'request').query;
+  const page = (search: string) => urlParts(`http://localhost:4104/a${search}`, base, 'page').query;
+  for (const read of [query, page]) {
+    assert.notDeepEqual(read('?q=%ff'), read('?q=%fe'));
+    assert.deepEqual(read('?q=%FF'), read('?q=%ff'), 'the case of the hex digits does not count');
+    assert.deepEqual(read('?q=%ff'), { q: ['base64:/w=='] });
+    assert.deepEqual(read('?q=a%ffb'), { q: ['base64:Yf9i'] });
+    assert.notDeepEqual(read('?q=%C3%A9'), read('?q=e%CC%81'), 'two spellings of one letter are two values');
+    assert.deepEqual(read('?q=%C3%A9'), { q: ['é'] });
+    assert.deepEqual(read('?q=%C3%A9'), read('?q=%c3%a9'));
+    assert.deepEqual(read('?q=%zz'), { q: ['%zz'] });
+    assert.notDeepEqual(read('?q=%zz'), read('?q=%zy'));
+    assert.deepEqual(read('?q=%4'), { q: ['%4'] });
+    assert.deepEqual(read('?a+b=c+d&e&&=f'), { 'a b': ['c d'], e: [''], '': ['f'] });
+    assert.deepEqual(read('?%ff=1'), { 'base64:/w==': ['1'] }, 'a name is read the same way');
+  }
+  const form = (text: string) => bodyParts(Buffer.from(text, 'latin1'), 'application/x-www-form-urlencoded');
+  assert.notDeepEqual(form('a=%ff'), form('a=%fe'));
+  assert.deepEqual(form('a=%ff'), { $aa: 'form', fields: { a: ['base64:/w=='] } });
+  assert.deepEqual(form('a=%C3%A9'), { $aa: 'form', fields: { a: ['é'] } });
+});
+
+test('a JSON number of a request body keeps the digits that a double does not hold', () => {
+  const json = (text: string) => bodyParts(Buffer.from(text), 'application/json');
+  const left = blank();
+  const right = blank();
+  const request = (body: unknown) => ({ method: 'POST', url: urlParts('http://localhost:4104/x', base, 'request'), body });
+  const differences = (a: string, b: string) => {
+    left.effects.requests = [request(json(a))] as never;
+    right.effects.requests = [request(json(b))] as never;
+    return compare(left, right).effects.map((difference) => difference.path);
+  };
+  assert.deepEqual(differences('{"id":12345678901234567890}', '{"id":12345678901234567890}'), []);
+  assert.equal(differences('{"id":12345678901234567890}', '{"id":12345678901234567891}').length, 1);
+  assert.equal(differences('{"p":0.1000000000000000055511151231257827}', '{"p":0.1}').length, 1);
+  assert.deepEqual(differences('{"id":1.0}', '{"id":1}'), [], 'a trailing zero is the same number');
+  assert.deepEqual(differences('{"id":1e2}', '{"id":100}'), [], 'an exponent is the same number');
+  assert.deepEqual(differences('{"id":100.50}', '{"id":100.5}'), []);
+  assert.deepEqual(differences('{"id":-0}', '{"id":0}'), []);
+  assert.deepEqual(differences('{"id":12345678901234567890}', '{"id":1.234567890123456789e19}'), [], 'the same digits, another form');
+  assert.equal(differences('{"id":5e-10}', '{"id":0}').length, 1);
+  assert.equal(differences('{"id":1}', '{"id":"1"}').length, 1);
+  assert.deepEqual(json('[12345678901234567890]'), json('[12345678901234567890]'));
+  assert.deepEqual(json('{"id":7,"list":[1.5,2]}'), { id: 7, list: [1.5, 2] }, 'a number that a double holds stays a number');
+});
+
+test('a boundary written in quotes is read, and so is one that is not', () => {
+  const body = multipart('a b', field('title', 'Report'));
+  const quoted = bodyParts(body, 'multipart/form-data; boundary="a b"');
+  assert.deepEqual(quoted, { $aa: 'multipart', fields: { title: [{ content: 'Report' }] } });
+  assert.deepEqual(bodyParts(multipart('plain', field('title', 'Report')), 'multipart/form-data; boundary=plain; charset=utf-8'), quoted);
+});
