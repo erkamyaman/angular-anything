@@ -1,0 +1,31 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "add-empty",
+  "description": "Enter on spaces adds nothing",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    },
+    {
+      "action": "fill",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "value": "   "
+    },
+    {
+      "action": "press",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "key": "Enter"
+    }
+  ]
+}

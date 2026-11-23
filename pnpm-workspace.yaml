@@ -3,6 +3,7 @@ packages:
   - fixtures/vue
   - fixtures/angularjs
   - fixtures/angular
+  - trials/todomvc/angular
 
 allowBuilds:
   '@parcel/watcher': false

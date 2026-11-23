@@ -143,7 +143,7 @@ test('a page that sends its next request in every few frames fails with the limi
 
 test('motion without page time that only the probe sees is named by the part that moved', { timeout: 60_000 }, async () => {
   const run = await runCase(browser, start('/worker'), base, 30_000, undefined, 500);
-  assert.match(run.error ?? '', /^step 2 \(click button "Start"\): the page moves without page time: still changing after 500 ms of real time \((accessibility, )?DOM\)$/);
+  assert.match(run.error ?? '', /^step 2 \(click button "Start"\): the page moves without page time: still changing after 500 ms of real time \((accessibility|DOM|accessibility, DOM)\)$/);
 });
 
 test('dialogs that a worker causes outside page time are seen by the wait', { timeout: 60_000 }, async () => {

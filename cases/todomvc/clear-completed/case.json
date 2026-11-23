@@ -1,0 +1,61 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "clear-completed",
+  "description": "Clear completed removes the done todos",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    },
+    {
+      "action": "fill",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "value": "Buy milk"
+    },
+    {
+      "action": "press",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "key": "Enter"
+    },
+    {
+      "action": "check",
+      "target": {
+        "role": "checkbox",
+        "name": "❯ Toggle All Input"
+      }
+    },
+    {
+      "action": "fill",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "value": "Walk the dog"
+    },
+    {
+      "action": "press",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "key": "Enter"
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Clear completed"
+      }
+    }
+  ]
+}

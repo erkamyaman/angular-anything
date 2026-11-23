@@ -1,0 +1,15 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "initial-render",
+  "description": "The empty app",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    }
+  ]
+}

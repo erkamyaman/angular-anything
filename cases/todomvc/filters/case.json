@@ -1,0 +1,75 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "filters",
+  "description": "Filter links show active and completed todos",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    },
+    {
+      "action": "fill",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "value": "Buy milk"
+    },
+    {
+      "action": "press",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "key": "Enter"
+    },
+    {
+      "action": "check",
+      "target": {
+        "role": "checkbox",
+        "name": "❯ Toggle All Input"
+      }
+    },
+    {
+      "action": "fill",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "value": "Walk the dog"
+    },
+    {
+      "action": "press",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "key": "Enter"
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "link",
+        "name": "Active"
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "link",
+        "name": "Completed"
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "link",
+        "name": "All"
+      }
+    }
+  ]
+}

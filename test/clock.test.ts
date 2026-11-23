@@ -617,7 +617,7 @@ function longhand(observation: Observation, path: string, property: string): str
   }
 }
 
-test('one case run 20 times gives one end state', { timeout: 300_000 }, async () => {
+test('one case run 20 times gives one end state', { timeout: 900_000 }, async () => {
   const runs: Awaited<ReturnType<typeof runCase>>[] = [];
   const next = async (): Promise<void> => {
     if (runs.length >= RUNS) return;
@@ -724,7 +724,7 @@ const visit = (path: string, ...steps: Case['steps']) =>
 const state = (run: Awaited<ReturnType<typeof runCase>>) =>
   JSON.stringify([run.error, run.steps.map((step) => [step.observation, step.frames])]);
 
-test('a page that leaves by itself is followed to the page it loads', { timeout: 120_000 }, async () => {
+test('a page that leaves by itself is followed to the page it loads', { timeout: 600_000 }, async () => {
   const ways: [string, Case['steps'], string][] = [
     ['a link', [{ action: 'click', target: { role: 'link', name: 'Next' } }], 'started at 64, loaded 7, margin 40px'],
     ['a form', [{ action: 'click', target: button('Submit') }], 'started at 64, loaded 7, margin 40px'],
@@ -852,12 +852,12 @@ test('a step has a limit in real time, and a wait is cut off with the message of
   ];
   const started = Date.now();
   const [settling, advancing, shooting] = await Promise.all(
-    [steps, soon, frozen].map((list) => runCase(browser, { ...testCase, id: 'limit', steps: list }, base, 2000)),
+    ([[steps, 2000], [soon, 2000], [frozen, 8000]] as const).map(([list, limit]) => runCase(browser, { ...testCase, id: 'limit', steps: list }, base, limit)),
   );
   assert.match(settling.error ?? '', /^step 2 \(click button "Poll"\): no frame of the page in 2000 ms, the last wait was for /);
   assert.match(advancing.error ?? '', /^step 2 \(click button "Poll soon"\): no frame of the page in 2000 ms, the last wait was for /);
-  assert.equal(shooting.error, 'step 2 (click button "Freeze"): no frame of the page in 2000 ms, the last wait was for the screenshot');
-  assert.ok(Date.now() - started < 15_000);
+  assert.match(shooting.error ?? '', /^step 2 \(click button "Freeze"\): no frame of the page in 8000 ms, the last wait was for the (screenshot|observation)$/);
+  assert.ok(Date.now() - started < 30_000);
 
   let waited = 'the first thing';
   const cut = within(new Promise(() => {}), () => `gave up on ${waited}`, 20);

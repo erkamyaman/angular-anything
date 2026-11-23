@@ -1,0 +1,15 @@
+{
+  "format": "angular-anything/recording@2",
+  "suite": "todomvc",
+  "case": "add-reload",
+  "source": "todomvc-react",
+  "url": "http://localhost:4201/",
+  "steps": 4,
+  "frames": [
+    4,
+    4,
+    4,
+    4
+  ],
+  "screenshotNoise": []
+}

@@ -441,3 +441,48 @@ From the second review:
 18. Masks: how wide a mask may be and whether it may hide a missing value. Together with open point 6.
 19. Endless animations and pages whose pixels never rest. Together with open points 1 and 2.
 20. The test gaps and the unrepeated findings of the second review.
+
+# TodoMVC trial port (2026-11-23)
+
+Goal (NEXT.md, task 3): port a TodoMVC app to Angular with the tool (record, port, gate), learn whether the tool helps, and which parts of step 5 it needs. Run in a cloud container (Linux, 4 cores, Node 24.22.3, Playwright 1.65.1, Chromium 159.0.8154.6), not on the maintainer's laptop.
+
+## What was done
+
+- Original: the React example of TodoMVC (React 19.2.5, `react-router-dom` hash routing, no persistence). Its production build already existed in the planning notes (`experiments/verify-gap-unit/rerun/harness/react/out-prod`, built from `experiments/gate-spike/dl-todomvc/repo/examples/react`), so nothing was downloaded for it. Copied to `trials/todomvc/react-dist`.
+- Port: `trials/todomvc/angular`, Angular 22.3, a workspace package (`pnpm-workspace.yaml`, `pnpm-lock.yaml`), built with `pnpm run build:port`. 7 files, 181 lines. The original CSS (`app.css`) and `base.js` of `todomvc-common` are kept as global files, the host page is the original's. Each component sits on the original element with a selector it already matches: `section[id=root]`, `header[data-testid=header]`, `main[data-testid=main]`, `footer[data-testid=footer]`, `li[data-testid=todo-item]`, `input[data-testid=text-input]`. State in one `@Service()` with signals, the route from `location.hash` and `popstate`.
+- Server: `node trials/todomvc/server.ts` (original on 4201, port on 4202).
+- Cases: `cases/todomvc`, 10 cases, 47 steps: initial render, add one, add three, add on spaces, trimmed title, toggle all twice, the three filter links, clear completed, add then reload, a page opened on `#/active`.
+
+## Results
+
+| Run | Result |
+|---|---|
+| `record todomvc --source todomvc-react` | exit 0, 10 of 10 cases, 0 masks, 4 frames per step, 79 s |
+| `gate` of the port, 3 runs | exit 0 each, 0 of 47 steps differ, 47 of 47 screenshots identical, 28 s each |
+| Port without `!` in the count | exit 1, DOM, at the text of `.todo-count` |
+| Port that does not trim | exit 1, `add-empty`, DOM, accessibility, style |
+| Port without the focus at start | exit 1, side effects `focus` and style (the focus ring) |
+| Port that hides `main` with `style.display` instead of `hidden` | exit 1, DOM `main[1].attrs.hidden` |
+| Port whose toggle-all looks at all todos instead of the visible ones | exit 1, `filters` step 8, accessibility, DOM, style |
+| Port whose Clear completed removes every todo | exit 1, `clear-completed` step 7 |
+| Port with `[class.selected]` instead of `class=""` on the links | exit 0: no class attribute and `class=""` compare equal, which no user sees either |
+
+Each variant was gated once (`planning/m2/fix-pass/todomvc-variants.txt`). The first port passed its first gate. No change to the tool was needed.
+
+## What hurt
+
+1. Recordings are stored per source and case only (`recordings/<source>/<case>`), not per suite. Four TodoMVC case ids (`add-empty`, `add-reload`, `initial-render`, `trim-title`) are also fixture case ids. `record todomvc --source react` overwrote the four fixture recordings of React without a word, and would have broken the fixture gate. They were restored from git and TodoMVC was recorded again as `--source todomvc-react`. The layout should hold the suite, or `record` should refuse a case folder that another suite wrote.
+2. The case format cannot reach three of TodoMVC's behaviors, so a port that breaks them passes:
+   - Toggle one todo: its checkbox has no accessible name (the label is a sibling without `for`), and a target is a role and a name only. There is no index and no "inside this list item".
+   - Delete one todo: the button is `display: none` until the row is hovered. There is no hover step.
+   - Edit a todo: needs a double click, then Enter, Escape or a blur. There is no double-click step and no blur.
+3. Accessible names hold CSS generated content. The toggle-all checkbox is "❯ Toggle All Input", because of a `::before` on its label. The first record failed 3 cases with "the target matches 0 elements". The message could list the names of that role on the page.
+4. A gate against a page that answers 404 (my mistake with a variant build) reports differences at `html[1].attrs`, the heading and `gets[0]`, and does not say that the page did not load.
+
+## What it says about step 5
+
+- The network tape (5a): not needed for TodoMVC. Its only request is the `GET learn.json` that `base.js` sends at load (404 on both sides), which the side effects compare.
+- Geometry in the same session (5b): not needed on one machine. All 47 screenshots and every size were equal. Gating a recording from another machine was not tried.
+- Secrets (5c): not needed. TodoMVC stores nothing and sends no credentials.
+
+What TodoMVC needs next is in the case format, not in step 5: targets inside a container or by index, and steps for hover, double click and blur. The next trial with a backend (sonner has none; RealWorld Conduit has one) is where the tape gets tested.
