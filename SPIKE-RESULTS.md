@@ -486,3 +486,15 @@ Each variant was gated once (`planning/m2/fix-pass/todomvc-variants.txt`). The f
 - Secrets (5c): not needed. TodoMVC stores nothing and sends no credentials.
 
 What TodoMVC needs next is in the case format, not in step 5: targets inside a container or by index, and steps for hover, double click and blur. The next trial with a backend (sonner has none; RealWorld Conduit has one) is where the tape gets tested.
+
+## Afterwards: what the trial changed in the tool (2026-11-23)
+
+Points 1 and 2 of "What hurt" are fixed:
+
+- `record` fails a case whose folder below `recordings/<source>` holds the recording of another suite, names that suite, and leaves the recording as it is. Two suites can still share a source when their case ids differ. Test in `test/e2e.test.ts`.
+- New steps `hover` and `dblclick`. A target can leave out its `name`, pick the Nth match with `index` (from 1) and be looked up `within` another target. Without an `index` every level must match one element, and the message says how many matched. Additive, so the format stays `angular-anything/case@1`; README "Steps and targets". Tests in `test/case.test.ts` and `test/targets.test.ts`.
+- 12 single changes of the new code, 12 caught (`planning/m2/fix-pass/gen4.mjs`, `m4.out`).
+
+TodoMVC has 5 more cases: `toggle-one`, `delete-one` (hover, then the button inside the row), `edit-enter`, `edit-blur` (Tab) and `edit-empty`. Recorded with 0 masks; the 10 earlier cases kept their root hashes. The port passes 15 of 15 (81 steps, 81 identical screenshots). Five more one-defect ports each fail the case that covers them, in the DOM layer (`planning/m2/fix-pass/todomvc-variants-2.txt`): an edit that does not trim, an empty edit that keeps the todo, a blur that drops the edit, a toggle of the wrong row, a delete of the wrong row. The port that does not trim its edit passes `edit-enter`: spaces around the text of a block label render the same, so step 2 compares them as equal. Only `edit-empty` catches it.
+
+Still open from "What hurt": point 3 (a target that matches nothing could list the names it found) and point 4 (a page that answers 404 is not named as such).

@@ -551,3 +551,19 @@ test('a suite without cases fails, a wrong command line exits 2', async () => {
     assert.match(output, /\n\nUsage: angular-anything <command>/);
   }
 });
+
+test('record leaves the recording of another suite with the same case id alone and fails that case by name', async () => {
+  const other = join(root, 'cases', 'other');
+  await cp(join(root, 'cases', 'tiny'), other, { recursive: true });
+  const lock = await readFile(recorded('lock.json'));
+  try {
+    const { status, output } = await run('record', 'other', '--source', 'original', '--url', original);
+    assert.equal(status, 1, output);
+    assert.match(output, /^FAIL {2}save\n {6}recordings\/original\/save holds the recording of the suite tiny: record the suite other with another --source$/m);
+    assert.deepEqual(await readFile(recorded('lock.json')), lock);
+    assert.equal(JSON.parse(await readFile(recorded('recording.json'), 'utf8')).suite, 'tiny');
+    assert.equal((await gate(port)).status, 0, 'the suite tiny still passes');
+  } finally {
+    await rm(other, { recursive: true });
+  }
+});

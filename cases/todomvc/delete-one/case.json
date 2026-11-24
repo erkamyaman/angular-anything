@@ -1,0 +1,65 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "delete-one",
+  "description": "Delete the first todo through the button that shows on hover",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    },
+    {
+      "action": "fill",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "value": "Buy milk"
+    },
+    {
+      "action": "press",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "key": "Enter"
+    },
+    {
+      "action": "fill",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "value": "Walk the dog"
+    },
+    {
+      "action": "press",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "key": "Enter"
+    },
+    {
+      "action": "hover",
+      "target": {
+        "role": "listitem",
+        "index": 1
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Delete todo",
+        "within": {
+          "role": "listitem",
+          "index": 1
+        }
+      }
+    }
+  ]
+}

@@ -57,6 +57,16 @@ export async function record({ root, suite, source, url }: Options): Promise<num
     }
     for (const { case: testCase, sha256 } of cases) {
       const directory = join(root, 'recordings', source, testCase.id);
+      const owner: Partial<Recording> | null = await readFile(join(directory, RECORDING_FILE), 'utf8')
+        .then(JSON.parse)
+        .catch(() => null);
+      if (typeof owner?.suite === 'string' && owner.suite !== suite) {
+        console.log(
+          `FAIL  ${testCase.id}\n      ${join('recordings', source, testCase.id)} holds the recording of the suite ${owner.suite}: ` +
+            `record the suite ${suite} with another --source`,
+        );
+        continue;
+      }
       await rm(directory, { recursive: true, force: true });
       const first = await runCase(browser, testCase, url);
       const second = first.error ? first : await runCase(browser, testCase, url);

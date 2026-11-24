@@ -1,0 +1,54 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "edit-blur",
+  "description": "Double-click a todo, change its title and leave the field with Tab",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    },
+    {
+      "action": "fill",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "value": "Buy milk"
+    },
+    {
+      "action": "press",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "key": "Enter"
+    },
+    {
+      "action": "dblclick",
+      "target": {
+        "role": "listitem",
+        "index": 1
+      }
+    },
+    {
+      "action": "fill",
+      "target": {
+        "role": "textbox",
+        "name": "Edit todo"
+      },
+      "value": "Buy bread"
+    },
+    {
+      "action": "press",
+      "target": {
+        "role": "textbox",
+        "name": "Edit todo"
+      },
+      "key": "Tab"
+    }
+  ]
+}

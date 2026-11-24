@@ -1,6 +1,6 @@
-import type { Browser, CDPSession, Page, Request } from 'playwright';
-import { describeStep, FRAME_MS } from './case.ts';
-import type { Case, Step } from './case.ts';
+import type { Browser, CDPSession, Locator, Page, Request } from 'playwright';
+import { describeStep, describeTarget, FRAME_MS } from './case.ts';
+import type { Case, Step, Target } from './case.ts';
 import { LAYERS, LAYER_NAMES } from './compare.ts';
 import type { Observation, Popup } from './compare.ts';
 import {
@@ -505,6 +505,19 @@ export function gotoUrl(path: string, base: URL): string {
   return url.href;
 }
 
+async function locate(page: Page, target: Target, label: string): Promise<Locator> {
+  const scope = target.within ? await locate(page, target.within, `the container ${describeTarget(target.within)}`) : page;
+  const role = target.role as Parameters<Page['getByRole']>[0];
+  const matches = scope.getByRole(role, target.name === undefined ? {} : { name: target.name, exact: true });
+  const count = await matches.count();
+  if (target.index === undefined) {
+    if (count !== 1) throw new Error(`${label} matches ${count} elements`);
+    return matches;
+  }
+  if (count < target.index) throw new Error(`${label} matches ${count} elements, so there is no #${target.index}`);
+  return matches.nth(target.index - 1);
+}
+
 async function act(page: Page, step: Step, base: URL): Promise<void> {
   switch (step.action) {
     case 'goto':
@@ -516,13 +529,16 @@ async function act(page: Page, step: Step, base: URL): Promise<void> {
     case 'advance':
       return;
   }
-  const { role, name } = step.target;
-  const target = page.getByRole(role as Parameters<Page['getByRole']>[0], { name, exact: true });
-  const count = await target.count();
-  if (count !== 1) throw new Error(`the target matches ${count} elements`);
+  const target = await locate(page, step.target, 'the target');
   switch (step.action) {
     case 'click':
       await target.click();
+      break;
+    case 'dblclick':
+      await target.dblclick();
+      break;
+    case 'hover':
+      await target.hover();
       break;
     case 'check':
       await target.check();

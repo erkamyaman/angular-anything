@@ -7,11 +7,11 @@ import type { Noise } from './noise.ts';
 export const CASE_FORMAT = 'angular-anything/case@1';
 export const FRAME_MS = 16;
 
-export type Target = { role: string; name: string };
+export type Target = { role: string; name?: string; index?: number; within?: Target };
 
 export type Step =
   | { action: 'goto'; path: string }
-  | { action: 'click' | 'check' | 'uncheck'; target: Target }
+  | { action: 'click' | 'dblclick' | 'hover' | 'check' | 'uncheck'; target: Target }
   | { action: 'fill'; target: Target; value: string }
   | { action: 'press'; target: Target; key: string }
   | { action: 'reload' }
@@ -42,7 +42,15 @@ export function checkName(kind: string, name: string): string {
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 const isText = (value: unknown): value is string => typeof value === 'string' && value !== '';
-const isTarget = (value: unknown) => isObject(value) && isText(value.role) && isText(value.name);
+const TARGET_KEYS = ['role', 'name', 'index', 'within'];
+const isTarget = (value: unknown): boolean =>
+  isObject(value) &&
+  isText(value.role) &&
+  Object.keys(value).every((key) => TARGET_KEYS.includes(key)) &&
+  (value.name === undefined || isText(value.name)) &&
+  (value.index === undefined || (Number.isInteger(value.index) && (value.index as number) > 0)) &&
+  (value.within === undefined || isTarget(value.within));
+const TARGET_PROBLEM = 'needs a "target": a "role", and as needed a "name", an "index" from 1 and a "within" target';
 const isSize = (value: unknown) => Number.isInteger(value) && (value as number) > 0;
 
 function stepProblem(step: unknown): string | undefined {
@@ -54,14 +62,16 @@ function stepProblem(step: unknown): string | undefined {
         ? 'needs a "path" that starts with / and stays on the page: it must not start with // or /\\'
         : undefined;
     case 'click':
+    case 'dblclick':
+    case 'hover':
     case 'check':
     case 'uncheck':
-      return isTarget(step.target) ? undefined : 'needs a "target" with "role" and "name"';
+      return isTarget(step.target) ? undefined : TARGET_PROBLEM;
     case 'fill':
-      if (!isTarget(step.target)) return 'needs a "target" with "role" and "name"';
+      if (!isTarget(step.target)) return TARGET_PROBLEM;
       return typeof step.value === 'string' ? undefined : 'needs a string "value"';
     case 'press':
-      if (!isTarget(step.target)) return 'needs a "target" with "role" and "name"';
+      if (!isTarget(step.target)) return TARGET_PROBLEM;
       return isText(step.key) ? undefined : 'needs a "key"';
     case 'reload':
       return undefined;
@@ -119,7 +129,13 @@ export async function loadSuite(root: string, suite: string): Promise<LoadedCase
   return cases;
 }
 
-const describeTarget = (target: Target) => `${target.role} ${JSON.stringify(target.name)}`;
+export const describeTarget = (target: Target): string =>
+  [
+    target.role,
+    target.name === undefined ? '' : ` ${JSON.stringify(target.name)}`,
+    target.index === undefined ? '' : ` #${target.index}`,
+    target.within === undefined ? '' : ` in ${describeTarget(target.within)}`,
+  ].join('');
 
 export function describeStep(step: Step): string {
   switch (step.action) {

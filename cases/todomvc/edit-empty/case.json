@@ -1,0 +1,70 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "edit-empty",
+  "description": "An empty title removes the todo",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    },
+    {
+      "action": "fill",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "value": "Buy milk"
+    },
+    {
+      "action": "press",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "key": "Enter"
+    },
+    {
+      "action": "fill",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "value": "Walk the dog"
+    },
+    {
+      "action": "press",
+      "target": {
+        "role": "textbox",
+        "name": "New Todo Input"
+      },
+      "key": "Enter"
+    },
+    {
+      "action": "dblclick",
+      "target": {
+        "role": "listitem",
+        "index": 2
+      }
+    },
+    {
+      "action": "fill",
+      "target": {
+        "role": "textbox",
+        "name": "Edit todo"
+      },
+      "value": "   "
+    },
+    {
+      "action": "press",
+      "target": {
+        "role": "textbox",
+        "name": "Edit todo"
+      },
+      "key": "Enter"
+    }
+  ]
+}
