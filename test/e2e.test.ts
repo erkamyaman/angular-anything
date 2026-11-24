@@ -479,7 +479,7 @@ test('record fails a case whose page never settles or whose target is missing, a
 
   const missing = await run('record', 'tiny', '--source', 'missing', '--url', empty);
   assert.equal(missing.status, 1, missing.output);
-  assert.match(missing.output, /^FAIL {2}save\n {6}step 2 \(fill textbox "Name" with "Ada"\): the target matches 0 elements$/m);
+  assert.match(missing.output, /^FAIL {2}save\n {6}step 2 \(fill textbox "Name" with "Ada"\): the target matches 0 elements, there is no textbox here$/m);
   assert.equal(await exists(join(root, 'recordings', 'restless')), false);
   assert.equal(await exists(join(root, 'recordings', 'missing')), false);
 });
@@ -514,7 +514,7 @@ test('record exits 1 when one case of the suite fails, and records the others', 
   const result = await run('record', 'mixed', '--source', 'mixed', '--url', empty);
   assert.equal(result.status, 1, result.output);
   assert.match(result.output, /^ok {4}fine /m);
-  assert.match(result.output, /^FAIL {2}broken\n {6}step 2 \(fill textbox "Name" with "Ada"\): the target matches 0 elements$/m);
+  assert.match(result.output, /^FAIL {2}broken\n {6}step 2 \(fill textbox "Name" with "Ada"\): the target matches 0 elements, there is no textbox here$/m);
   assert.match(result.output, /Recorded 1 of 2 cases into recordings\/mixed\./);
   assert.equal(await exists(join(root, 'recordings', 'mixed', 'fine', 'lock.json')), true);
   assert.equal(await exists(join(root, 'recordings', 'mixed', 'broken')), false);

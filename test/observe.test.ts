@@ -176,7 +176,7 @@ test('a target is the accessible name as it is written, not a part of one', asyn
   assert.equal(run.error, undefined);
   assert.ok(JSON.stringify(run.steps[1].observation.dom).includes('one'));
   const none = await runCase(browser, make('/names', [{ action: 'click', target: { role: 'button', name: 'Add a' } }]), base);
-  assert.match(none.error ?? '', /^step 2 \(click button "Add a"\): the target matches 0 elements$/);
+  assert.match(none.error ?? '', /^step 2 \(click button "Add a"\): the target matches 0 elements, the button elements here: "Add", "Add all"$/);
 });
 
 test('the screenshot of a step is the one that the page ends on, not one from the middle of a repaint', { timeout: 60_000 }, async () => {

@@ -1,4 +1,4 @@
-import type { Browser, CDPSession, Locator, Page, Request } from 'playwright';
+import type { Browser, CDPSession, Locator, Page, Request, Response } from 'playwright';
 import { describeStep, describeTarget, FRAME_MS } from './case.ts';
 import type { Case, Step, Target } from './case.ts';
 import { LAYERS, LAYER_NAMES } from './compare.ts';
@@ -505,11 +505,26 @@ export function gotoUrl(path: string, base: URL): string {
   return url.href;
 }
 
+async function present(scope: Page | Locator, role: Parameters<Page['getByRole']>[0]): Promise<string> {
+  const names: string[] = [];
+  let unnamed = 0;
+  for (const element of await scope.getByRole(role).all()) {
+    const quoted = /^- [^\s"]+ ("(?:[^"\\]|\\.)*")/.exec(await element.ariaSnapshot().catch(() => ''))?.[1];
+    if (quoted === undefined) unnamed++;
+    else names.push(JSON.stringify(JSON.parse(quoted)));
+  }
+  if (names.length === 0 && unnamed === 0) return `there is no ${role} here`;
+  const listed = [...new Set(names)].slice(0, 10);
+  const parts = [...listed, ...(names.length > listed.length ? ['and more'] : []), ...(unnamed > 0 ? [`${unnamed} without a name`] : [])];
+  return `the ${role} elements here: ${parts.join(', ')}`;
+}
+
 async function locate(page: Page, target: Target, label: string): Promise<Locator> {
   const scope = target.within ? await locate(page, target.within, `the container ${describeTarget(target.within)}`) : page;
   const role = target.role as Parameters<Page['getByRole']>[0];
   const matches = scope.getByRole(role, target.name === undefined ? {} : { name: target.name, exact: true });
   const count = await matches.count();
+  if (count === 0) throw new Error(`${label} matches 0 elements, ${await present(scope, role)}`);
   if (target.index === undefined) {
     if (count !== 1) throw new Error(`${label} matches ${count} elements`);
     return matches;
@@ -518,13 +533,17 @@ async function locate(page: Page, target: Target, label: string): Promise<Locato
   return matches.nth(target.index - 1);
 }
 
+function answered(response: Response | null): void {
+  if (response && response.status() >= 400) throw new Error(`the page answered ${`${response.status()} ${response.statusText()}`.trim()}`);
+}
+
 async function act(page: Page, step: Step, base: URL): Promise<void> {
   switch (step.action) {
     case 'goto':
-      await page.goto(gotoUrl(step.path, base));
+      answered(await page.goto(gotoUrl(step.path, base)));
       return;
     case 'reload':
-      await page.reload();
+      answered(await page.reload());
       return;
     case 'advance':
       return;

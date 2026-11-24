@@ -85,7 +85,7 @@ test('a target without a name is picked by its index, also inside another target
 
 test('a button that shows only while its row is hovered is reached by a hover step', async () => {
   const hidden = await run({ action: 'click', target: { role: 'button', name: 'Delete', within: { role: 'listitem', index: 1 } } });
-  assert.equal(hidden.error, 'step 2 (click button "Delete" in listitem #1): the target matches 0 elements');
+  assert.equal(hidden.error, 'step 2 (click button "Delete" in listitem #1): the target matches 0 elements, there is no button here');
   const result = await run(
     { action: 'hover', target: { role: 'listitem', index: 1 } },
     { action: 'click', target: { role: 'button', name: 'Delete', within: { role: 'listitem', index: 1 } } },
@@ -110,4 +110,21 @@ test('a target that is not one element names how many it matched, and so does it
   assert.equal(past.error, 'step 2 (check checkbox #3): the target matches 2 elements, so there is no #3');
   const outer = await run({ action: 'check', target: { role: 'checkbox', within: { role: 'listitem' } } });
   assert.equal(outer.error, 'step 2 (check checkbox in listitem): the container listitem matches 2 elements');
+});
+
+test('a target that matches nothing names what its role holds there', async () => {
+  const named = await run({ action: 'click', target: { role: 'textbox', name: 'Items' } });
+  assert.equal(named.error, 'step 2 (click textbox "Items"): the target matches 0 elements, there is no textbox here');
+  const lists = await run({ action: 'click', target: { role: 'list', name: 'items' } });
+  assert.equal(lists.error, 'step 2 (click list "items"): the target matches 0 elements, the list elements here: "Items"');
+  const boxes = await run({ action: 'check', target: { role: 'checkbox', name: 'One' } });
+  assert.equal(boxes.error, 'step 2 (check checkbox "One"): the target matches 0 elements, the checkbox elements here: 2 without a name');
+});
+
+test('a page that answers with an error status fails its goto and says so', async () => {
+  const testCase: Case = { format: 'angular-anything/case@1', id: 'gone', viewport: { width: 600, height: 400 }, steps: [{ action: 'goto', path: '/gone' }] };
+  const result = await runCase(browser, testCase, base);
+  assert.equal(result.error, 'step 1 (goto /gone): the page answered 404 Not Found');
+  const reloaded = await run({ action: 'reload' });
+  assert.equal(reloaded.error, undefined);
 });
