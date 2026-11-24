@@ -1,0 +1,47 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "stack-four",
+  "description": "Four toasts: three are visible, the oldest is hidden",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Default"
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Success"
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Error"
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Description"
+      }
+    },
+    {
+      "action": "advance",
+      "frames": 20
+    }
+  ]
+}

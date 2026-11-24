@@ -1,0 +1,33 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "success-error",
+  "description": "A success and an error toast stack with their icons",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Success"
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Error"
+      }
+    },
+    {
+      "action": "advance",
+      "frames": 20
+    }
+  ]
+}

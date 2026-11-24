@@ -1,0 +1,58 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "expand-on-hover",
+  "description": "Hovering the stack expands it and holds its timers, leaving lets them run",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Default"
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Success"
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Error"
+      }
+    },
+    {
+      "action": "hover",
+      "target": {
+        "role": "listitem",
+        "index": 1
+      }
+    },
+    {
+      "action": "advance",
+      "frames": 300
+    },
+    {
+      "action": "hover",
+      "target": {
+        "role": "heading",
+        "name": "Toasts"
+      }
+    },
+    {
+      "action": "advance",
+      "frames": 300
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "action",
+  "description": "The action button sends its event and closes the toast",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Action"
+      }
+    },
+    {
+      "action": "advance",
+      "frames": 20
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Undo"
+      }
+    },
+    {
+      "action": "advance",
+      "frames": 20
+    }
+  ]
+}

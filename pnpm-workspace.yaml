@@ -4,6 +4,8 @@ packages:
   - fixtures/angularjs
   - fixtures/angular
   - trials/todomvc/angular
+  - trials/sonner/react
+  - trials/sonner/angular
 
 allowBuilds:
   '@parcel/watcher': false

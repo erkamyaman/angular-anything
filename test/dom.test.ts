@@ -820,3 +820,12 @@ test('a colour in a style attribute compares as the colour the browser reads, ho
   assert.equal(await differ(colour('--c: red'), colour('--c: #f00')), true, 'a custom property is compared as written');
   assert.equal(await differ(colour('color: var(--c, red)'), colour('color: var(--c, #f00)')), true, 'a var() is compared as written');
 });
+
+test('custom properties of the computed style are stored in the order of their names, after the longhands', async () => {
+  const names = Array.from({ length: 24 }, (_, at) => `--p${String(23 - at).padStart(2, '0')}`);
+  const captured = await capture(`<style>p { ${names.map((name) => `${name}: 1`).join('; ')} }</style><p>x</p>`);
+  const keys = Object.keys(captured.style['html[1]/body[1]/p[1]'].style);
+  const custom = keys.filter((key) => key.startsWith('--'));
+  assert.deepEqual(custom, [...names].sort());
+  assert.equal(keys.findIndex((key) => key.startsWith('--')), keys.length - custom.length, 'the custom properties come last');
+});

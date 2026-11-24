@@ -498,3 +498,55 @@ Points 1 and 2 of "What hurt" are fixed:
 TodoMVC has 5 more cases: `toggle-one`, `delete-one` (hover, then the button inside the row), `edit-enter`, `edit-blur` (Tab) and `edit-empty`. Recorded with 0 masks; the 10 earlier cases kept their root hashes. The port passes 15 of 15 (81 steps, 81 identical screenshots). Five more one-defect ports each fail the case that covers them, in the DOM layer (`planning/m2/fix-pass/todomvc-variants-2.txt`): an edit that does not trim, an empty edit that keeps the todo, a blur that drops the edit, a toggle of the wrong row, a delete of the wrong row. The port that does not trim its edit passes `edit-enter`: spaces around the text of a block label render the same, so step 2 compares them as equal. Only `edit-empty` catches it.
 
 Points 3 and 4 are fixed as well: a target that matches nothing lists the names its role has on the page (or says there is none), and a `goto` or `reload` whose page answers with a status of 400 or more fails its step with that status. 6 single changes, 6 caught (`planning/m2/fix-pass/gen5.mjs`, `m5.out`).
+
+# sonner trial port (2026-11-24)
+
+Goal (Q19): port a React library to Angular with the tool and see what hurts. sonner 2.0.8 (MIT, Emil Kowalski), the toast library that Q18 names as the library showcase. Run in the same Linux container as the TodoMVC trial.
+
+## What was done
+
+- Source: `sonner@2.0.8` from npm for the original, and the tag `v2.0.8` from GitHub to read (`src/index.tsx` 900 lines, `state.ts` 364, `assets.tsx` 122, `styles.css` 729). The npm build and the tag match, the CSS too.
+- Original: `trials/sonner/react`, a React 19 demo page with one button per feature (plain, description, success, error, an action that sends an event, a close button with `onDismiss`, `toast.promise` over a real `POST /api/save` that answers after 300 ms, dismiss all) and one `<Toaster />`. Built with Vite.
+- Port: `trials/sonner/angular`, Angular 22.3. `src/sonner/state.ts` (the observer, ported line by line without JSX), `src/sonner/sonner.ts` (`Toaster` on `section[data-react-aria-top-layer]`, `Toast` on `li[data-sonner-toast]`, `Loader`, the icons as SVG templates, the swipe handlers), the MIT notice in `src/sonner/LICENSE.md`, and the same demo page. 778 lines.
+- Server: `node trials/sonner/server.ts` (original on 4301, port on 4302).
+- Cases: `cases/sonner`, 9 cases, 44 steps: the lifetime of a toast (enters, still there after 200 frames, gone 100 frames later), description, success and error with icons, four toasts of which three are visible, hover expands the stack and holds its timers, the action button, the close button, the promise toast, dismiss all.
+
+## Results
+
+| Run | Result |
+|---|---|
+| `record sonner --source sonner-react` | exit 0, 9 of 9, 0 masks, 83 s |
+| First gate of the port | exit 1, 27 of 44 steps, style layer only: `outline-width` and the spelling of two custom properties (see "What hurt", 2) |
+| Gate after the CSS fix, 3 runs | exit 0 each, 0 of 44 steps differ, 44 of 44 screenshots identical, the same frames as the original in every step |
+| Four recordings of the original (after the fix in "What hurt", 3) | the same 97 files and the same 9 roots, byte for byte |
+
+Ten one-defect ports, one gate each (`planning/trials/sonner/variants.txt`):
+
+| Port | Result |
+|---|---|
+| Lifetime 3000 ms instead of 4000 | exit 1, `default-lifetime` step 3: the toast is gone too early |
+| Lifetime 5000 ms | exit 1, not settled within the frames of the original (a timer of 5000 ms due in 9 ms), in two cases |
+| No pause while the stack is hovered | exit 1, `expand-on-hover` step 6 |
+| Four visible toasts instead of three | exit 1, `stack-four`, `data-visible` and opacity |
+| Gap 16 px instead of 14 | exit 1 in most cases, `--gap` and every offset |
+| The action does not close its toast | exit 1, `action` step 4, also `focus` |
+| The close button does not call `onDismiss` | exit 1, `close-button`, events |
+| New toasts at the end instead of the front | exit 1, `dismiss-all` and `expand-on-hover` |
+| No exit delay (removed at once, without the 200 ms `data-removed` state) | exit 0, see "What hurt", 4 |
+| One of the two ways focus goes back after the list empties removed | exit 0: the other way still returns it. With both removed, `action` and `close-button` fail on `focus` |
+
+## What hurt
+
+1. Q34 puts every component on the original's own element. For a library that means the consumer writes the library's root element: `<section data-react-aria-top-layer="true"></section>` instead of `<Toaster />`. A React original has no other element to put the `Toaster` on. The DOM matches, but the API of the port leaks an attribute that React added for another library. Open point for the maintainer: whether Q34 holds for the public API of a library port, or only for apps.
+2. The CSS that the original runs is not the CSS of its source. sonner's build injects a minified copy into a `<style>` element, and its minifier wrote `outline:0` for `outline: none`: Chromium 159 computes `outline-width` 0px for the first and 3px for the second. The Angular build then minified the port's copy and wrote `.05` for `0.05` inside custom properties, which the browser keeps, and the tool compares, as written. The fix in the port: take the CSS string the original's build injects and serve it unchanged as a static file, outside the Angular build. A rule for the porting skill: take the CSS from the running original, and keep it away from the port's minifier.
+3. A bug of the tool, found by this page: Chromium lists the custom properties of a computed style in an order that changes from load to load. Every value compared equal, but the stored files of 5 of 9 cases differed between two recordings (12 of 88 files), so the root hashes could not be reproduced (step 1, done-item 5, never had a page with custom properties). Fixed: the capture stores the custom properties sorted by name, after the longhands. No stored recording held a custom property, so none changed. Test in `test/dom.test.ts`, 2 single changes, 2 caught.
+4. The 200 ms in which a toast leaves (`data-removed="true"`, its exit transition) is never observed: the step stays open until that timer has fired (the look-ahead of step 1), so a port that removes a toast at once passes. This is the listed limit "a state shortly before a timer fires can not be recorded", now with a port that shows it.
+5. Swiping a toast away is ported but not tested: the case format has no pointer path (listed under "Not in this milestone").
+
+## What it says about step 5
+
+- The tape (5a): sonner's `toast.promise` sent a real `POST` and the step 1 rules held it and answered it the same way on both sides. Nothing on the tape was needed.
+- Geometry (5b): heights are measured with `getBoundingClientRect` and written into custom properties (`--initial-height: 58px`, `--front-toast-height`), which are compared anywhere as values. On another machine (fonts) these would differ like the fixture's widths. 5b's split of declared against laid-out values does not reach a size that a script writes into a custom property; step 5b already names this ("a size that a script wrote into an inline style, a custom property ... can differ on another machine"). sonner is that page.
+- Secrets (5c): not needed.
+
+So the next work for showcase use is 5b, and sonner adds a case 5b does not solve yet: sizes that the page itself measures and writes as text.

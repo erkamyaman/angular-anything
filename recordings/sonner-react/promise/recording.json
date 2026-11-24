@@ -1,0 +1,14 @@
+{
+  "format": "angular-anything/recording@2",
+  "suite": "sonner",
+  "case": "promise",
+  "source": "sonner-react",
+  "url": "http://localhost:4301/",
+  "steps": 3,
+  "frames": [
+    4,
+    4,
+    44
+  ],
+  "screenshotNoise": []
+}

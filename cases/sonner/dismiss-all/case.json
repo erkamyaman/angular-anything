@@ -1,0 +1,44 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "dismiss-all",
+  "description": "Dismiss all closes every toast",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Default"
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Success"
+      }
+    },
+    {
+      "action": "advance",
+      "frames": 20
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Dismiss all"
+      }
+    },
+    {
+      "action": "advance",
+      "frames": 20
+    }
+  ]
+}

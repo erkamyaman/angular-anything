@@ -1,0 +1,30 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "default-lifetime",
+  "description": "A toast enters, stays for 200 frames and has left 100 frames later",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Default"
+      }
+    },
+    {
+      "action": "advance",
+      "frames": 200
+    },
+    {
+      "action": "advance",
+      "frames": 100
+    }
+  ]
+}

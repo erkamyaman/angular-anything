@@ -1,0 +1,26 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "promise",
+  "description": "A promise toast shows loading, then the result of the request",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Promise"
+      }
+    },
+    {
+      "action": "advance",
+      "frames": 40
+    }
+  ]
+}

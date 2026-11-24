@@ -1,0 +1,17 @@
+{
+  "format": "angular-anything/recording@2",
+  "suite": "sonner",
+  "case": "stack-four",
+  "source": "sonner-react",
+  "url": "http://localhost:4301/",
+  "steps": 6,
+  "frames": [
+    4,
+    4,
+    4,
+    4,
+    4,
+    24
+  ],
+  "screenshotNoise": []
+}

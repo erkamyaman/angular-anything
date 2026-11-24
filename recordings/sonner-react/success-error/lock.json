@@ -1,0 +1,18 @@
+{
+  "format": "angular-anything/lock@0",
+  "playwright": "1.65.1",
+  "browser": "chromium 159.0.8154.6",
+  "case": "14d89689be5a677a8f7bf90d01bfa63c197821b0aa4c83acd102b4e201633681",
+  "files": {
+    "01.json": "acd1c159f4b1da30ee6b8648adb7155ed699fc310467bd71b20be7bae07d659c",
+    "01.png": "1a0c5d66b34949efddf6f118f16399cdc88bfa5c67f72c664af084e6b52ce49e",
+    "02.json": "37b1d328252093c4437315f37954de74e925478ecb7d5e8095ed786fe8f8c148",
+    "02.png": "ab2ff8ebb4a676b948f451a85aa364f9e1dfb03c2c20cf6af9b90bdd1660e83c",
+    "03.json": "e9a9abf0275f4b4bebc773f1ae223c34b5542a11950c1fdb6f226547db8b8b47",
+    "03.png": "36c6adfa761870323a49d2e9fe62b8a74c513974a813905e7a9e5aa1af79a7e0",
+    "04.json": "e9a9abf0275f4b4bebc773f1ae223c34b5542a11950c1fdb6f226547db8b8b47",
+    "04.png": "36c6adfa761870323a49d2e9fe62b8a74c513974a813905e7a9e5aa1af79a7e0",
+    "recording.json": "d8d4fb25e2b4737309c384355576e7a8947b2f31dad43612ba0e025d72bda6d4"
+  },
+  "root": "30c13e889323be50808eae4cf09bb950c744ef81b54e3081e499cbda8288262b"
+}

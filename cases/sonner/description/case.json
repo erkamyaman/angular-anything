@@ -1,0 +1,26 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "description",
+  "description": "A toast with a description",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Description"
+      }
+    },
+    {
+      "action": "advance",
+      "frames": 20
+    }
+  ]
+}

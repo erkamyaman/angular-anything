@@ -502,7 +502,9 @@ export function capturePage(): PageCapture {
 
   const longhands = (computed: CSSStyleDeclaration): Record<string, string> =>
     Object.fromEntries(
-      [...computed].map((property) => [property, computed.getPropertyValue(property).replace(originPattern, 'url($1[page-origin]')]),
+      [...[...computed].filter((property) => !property.startsWith('--')), ...[...computed].filter((property) => property.startsWith('--')).sort()].map(
+        (property) => [property, computed.getPropertyValue(property).replace(originPattern, 'url($1[page-origin]')],
+      ),
     );
 
   const changed = (own: Record<string, string>, parent: Record<string, string> = {}) => {

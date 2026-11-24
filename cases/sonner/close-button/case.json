@@ -1,0 +1,37 @@
+{
+  "format": "angular-anything/case@1",
+  "id": "close-button",
+  "description": "The close button closes the toast and calls onDismiss",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "steps": [
+    {
+      "action": "goto",
+      "path": "/"
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Close button"
+      }
+    },
+    {
+      "action": "advance",
+      "frames": 20
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Close toast"
+      }
+    },
+    {
+      "action": "advance",
+      "frames": 20
+    }
+  ]
+}
