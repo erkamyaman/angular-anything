@@ -15,7 +15,7 @@ export type Style = Record<string, { style: Record<string, string>; box?: Box; l
 
 export const LAID_OUT = '[laid out]';
 
-export const LAID_OUT_NAMES = 'width height inline-size block-size perspective-origin transform-origin top right bottom left inset-block-start inset-block-end inset-inline-start inset-inline-end';
+export const LAID_OUT_NAMES = 'width height inline-size block-size perspective-origin transform-origin top right bottom left inset-block-start inset-block-end inset-inline-start inset-inline-end margin-top margin-right margin-bottom margin-left margin-block-start margin-block-end margin-inline-start margin-inline-end';
 
 export type Unread = { path: string; attribute: string }[];
 
@@ -507,7 +507,7 @@ export function capturePage(): PageCapture {
 
   const laidOut = '[laid out]';
   const laidOutNames = new Set(
-    'width height inline-size block-size perspective-origin transform-origin top right bottom left inset-block-start inset-block-end inset-inline-start inset-inline-end'.split(' '),
+    'width height inline-size block-size perspective-origin transform-origin top right bottom left inset-block-start inset-block-end inset-inline-start inset-inline-end margin-top margin-right margin-bottom margin-left margin-block-start margin-block-end margin-inline-start margin-inline-end'.split(' '),
   );
   const isLength = (value: string) => /^-?(\d+\.?\d*|\.\d+)(e-?\d+)?px$/.test(value.trim());
   const probe = (() => {
@@ -532,12 +532,16 @@ export function capturePage(): PageCapture {
         } else {
           values[property] = value;
         }
-      } else if (!value.includes('px')) {
+      } else if (!value.includes('px') && property !== 'transform') {
         values[property] = value;
       } else if (declared) {
         const written = declared.get(property)?.toString();
-        values[property] = written ?? value;
-        if (written !== undefined && written !== value) layout[property] = value;
+        if (written === undefined || written === value || (isLength(written) && isLength(value))) {
+          values[property] = value;
+        } else {
+          values[property] = written;
+          layout[property] = value;
+        }
       } else if (laidOutNames.has(property)) {
         values[property] = laidOut;
         layout[property] = value;

@@ -131,6 +131,7 @@ function inheritStyle(style: Style): Style {
         : value;
     }
     full[path] = { ...own, style: { ...inherited, ...own.style } as Record<string, string> };
+    if (parent?.layout || own.layout) full[path].layout = { ...parent?.layout, ...own.layout };
   }
   return full;
 }

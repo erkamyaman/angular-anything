@@ -4,8 +4,8 @@
   "browser": "chromium 159.0.8154.6",
   "case": "fdc64bb4341a5c6688b87d3707a9aa15a6eea79b725cf976c39651f0f573d58a",
   "files": {
-    "01.json": "cfd226c9d057c99038ae8dcedd7487b5771302ec03374e12c14e7807722a96f1",
+    "01.json": "fadd3d8d0751bf60f17b00efffafb346bccd79e20333a90947c451b3cdb0d7c5",
     "recording.json": "476dc8f85809f6c6ea454ddb4857ae00f31b0850f9c42a4b38eb0229e85347aa"
   },
-  "root": "0afbe2dbf0a58a16a0567274fa57af5b977cb131a7c2f34162f5597129cdb91c"
+  "root": "0a05cc52faf5015abe85d54268f3eba43426a37e30a7b6176fb8eb77be034b0e"
 }

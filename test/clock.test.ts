@@ -637,7 +637,7 @@ test('one case run 20 times gives one end state', { timeout: 900_000 }, async ()
   const heading = 'html[1]/body[1]/main[1]/h1[1]';
   for (const step of steps) {
     assert.equal(longhand(step, `${heading}/span[1]`, 'opacity'), '1');
-    assert.equal(longhand(step, `${heading}/span[2]`, 'transform'), 'matrix(1, 0, 0, 1, 0, 0)');
+    assert.equal(longhand(step, `${heading}/span[2]`, 'transform'), 'rotate(0deg)', 'an endless turn is held at its start');
   }
   assert.equal(text(steps[0], 'stamps'), 'loaded at 0 on 2026-01-01T00:00:00.000Z, answer at 0,');
   assert.equal(text(steps[1], 'count'), '1');

@@ -854,7 +854,7 @@ test('a custom element that Angular created, that no one registered and that ren
 });
 
 test('a length that comes from layout is stored as written, and the laid-out value is kept apart for the same session', async () => {
-  const { style, dom: tree } = await capture(`<style>main { width: 50%; margin: 0 auto } p { margin-left: 3px; width: 120px } p::before { content: "a"; display: inline-block; width: 50%; margin-left: 2px }</style>
+  const { style, dom: tree } = await capture(`<style>main { width: 50%; margin: 0 auto } p { margin-left: 3px; width: 120px } p::before { content: "a"; display: inline-block; width: 50%; padding-left: 2px }</style>
     <main><p>x</p><span style="--h: 58px; --c: red">y</span></main><p>z</p>`);
   const main = style['html[1]/body[1]/main[1]'];
   assert.equal(main.style.width, '50%');
@@ -868,8 +868,26 @@ test('a length that comes from layout is stored as written, and the laid-out val
   const before = style['html[1]/body[1]/main[1]/p[1]/::before'];
   assert.equal(before.style.width, '[laid out]', 'a pseudo-element has no declared value, so a listed name is a size');
   assert.equal(before.layout?.width, '60px');
-  assert.equal(before.style['margin-left'], '2px', 'a name that is not listed is stored');
+  assert.equal(before.style['padding-left'], '2px', 'a name that is not listed is stored');
   const [span] = find(tree, 'span');
   assert.deepEqual(span.inline, { '--h': '[laid out]', '--c': 'red' });
   assert.deepEqual((span as { layout?: unknown }).layout, { '--h': '58px' });
+});
+
+test('a transform in percent, the margins of a pseudo-element and a border width that is not drawn are stored without layout', async () => {
+  const { style } = await capture(`<style>
+    .tip { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) }
+    p::before { content: ""; display: block; width: 6px; margin: 0 auto }
+    .flat { border-width: 0 }
+  </style><div class="tip">centred</div><p>x</p><div class="flat">a</div><div>b</div>`);
+  const tip = style['html[1]/body[1]/div[1]'];
+  assert.equal(tip.style.transform, 'translate(-50%, -50%)');
+  assert.match(tip.layout?.transform ?? '', /^matrix\(/);
+  const before = style['html[1]/body[1]/p[1]/::before'];
+  assert.equal(before.style['margin-left'], '[laid out]');
+  assert.equal(before.style['margin-inline-end'], '[laid out]');
+  const border = async (css: string) => (await capture(`<style>${css}</style><section><div>b</div></section>`)).style['html[1]/body[1]/section[1]/div[1]'].style['border-left-width'];
+  assert.equal(await border(''), undefined, 'the same as its parent: 0px');
+  assert.equal(await border('div { border-width: 7px }'), undefined, 'a border that is not drawn has width 0 either way');
+  assert.equal(await border('div { border: 2px solid }'), '2px', 'a border that is drawn');
 });

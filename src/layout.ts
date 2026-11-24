@@ -1,5 +1,6 @@
 import type { Observation } from './compare.ts';
 import type { DomNode, Style } from './page.ts';
+import { isPlaceholder } from './value.ts';
 
 const strip = (node: DomNode): DomNode => {
   if (typeof node === 'string') return node;
@@ -8,7 +9,7 @@ const strip = (node: DomNode): DomNode => {
 };
 
 const keep = (node: DomNode): DomNode => {
-  if (typeof node === 'string') return '';
+  if (typeof node === 'string' || isPlaceholder(node)) return '';
   const kept: Exclude<DomNode, string> = { tag: node.tag };
   if (node.layout) kept.layout = node.layout;
   if (node.children) kept.children = node.children.map(keep);
