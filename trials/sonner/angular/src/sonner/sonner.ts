@@ -11,6 +11,7 @@ import {
   signal,
   untracked,
   viewChild,
+  ViewEncapsulation,
 } from '@angular/core';
 import { ToastState } from './state';
 import type { HeightT, Position, SwipeDirection, Title, ToastT, ToastToDismiss } from './types';
@@ -315,17 +316,11 @@ export class Toast {
 }
 
 @Component({
-  selector: 'section[data-react-aria-top-layer]',
+  selector: 'ngx-toaster',
   imports: [Toast],
-  host: {
-    '[attr.aria-label]': 'label',
-    tabindex: '-1',
-    'aria-live': 'polite',
-    'aria-relevant': 'additions text',
-    'aria-atomic': 'false',
-    'data-react-aria-top-layer': 'true',
-  },
-  template: `@for (position of possiblePositions(); track position; let positionIndex = $index) {@if (filteredToasts().length) {<ol #list [attr.dir]="dir" tabindex="-1" data-sonner-toaster="true" [attr.data-sonner-theme]="theme" [attr.data-y-position]="position.split('-')[0]" [attr.data-x-position]="position.split('-')[1]" [style]="listStyle()" (focusout)="listBlur($event)" (focusin)="listFocus($event)" (mouseenter)="expanded.set(true)" (mousemove)="expanded.set(true)" (mouseleave)="listLeave()" (dragend)="expanded.set(false)" (pointerdown)="listPointerDown($event)" (pointerup)="interacting.set(false)">@for (toast of toastsAt(position, positionIndex); track toast.id; let index = $index) {<li data-sonner-toast="" [toast]="toast" [index]="index" [position]="position"></li>}</ol>}}`,
+  encapsulation: ViewEncapsulation.None,
+  styles: 'ngx-toaster { display: contents }',
+  template: `<section [attr.aria-label]="label" tabindex="-1" aria-live="polite" aria-relevant="additions text" aria-atomic="false" data-react-aria-top-layer="true">@for (position of possiblePositions(); track position; let positionIndex = $index) {@if (filteredToasts().length) {<ol #list [attr.dir]="dir" tabindex="-1" data-sonner-toaster="true" [attr.data-sonner-theme]="theme" [attr.data-y-position]="position.split('-')[0]" [attr.data-x-position]="position.split('-')[1]" [style]="listStyle()" (focusout)="listBlur($event)" (focusin)="listFocus($event)" (mouseenter)="expanded.set(true)" (mousemove)="expanded.set(true)" (mouseleave)="listLeave()" (dragend)="expanded.set(false)" (pointerdown)="listPointerDown($event)" (pointerup)="interacting.set(false)">@for (toast of toastsAt(position, positionIndex); track toast.id; let index = $index) {<li data-sonner-toast="" [toast]="toast" [index]="index" [position]="position"></li>}</ol>}}</section>`,
 })
 export class Toaster implements OnDestroy {
   readonly position: Position = 'bottom-right';

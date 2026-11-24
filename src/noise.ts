@@ -47,8 +47,8 @@ const shape: Record<Layer, (tokens: Token[]) => string | undefined> = {
     const rest = tokens.slice(element.end);
     if (element.text) return rest.length === 0 ? undefined : 'a text node has no fields';
     if (rest.length === 0) return 'names an element, not one value';
-    if (rest.length === 2 && words('attrs', 'props', 'inline')(rest[0]) && key(rest[1])) return undefined;
-    return 'names an object: use attrs.<name>, props.<name> or inline.<property> of an element';
+    if (rest.length === 2 && words('attrs', 'props', 'inline', 'layout')(rest[0]) && key(rest[1])) return undefined;
+    return 'names an object: use attrs.<name>, props.<name>, inline.<property> or layout.<property> of an element';
   },
   accessibility(tokens) {
     if (words('tree')(tokens[0]) && tokens[1] === '/') {
@@ -73,10 +73,10 @@ const shape: Record<Layer, (tokens: Token[]) => string | undefined> = {
     const rest = tokens.slice(element.end);
     const [group, name] = rest;
     if (rest.length === 2 && key(name)) {
-      if (words('style')(group)) return undefined;
+      if (words('style', 'layout')(group)) return undefined;
       if (words('box')(group) && ['x', 'y', 'width', 'height'].includes(name.key)) return undefined;
     }
-    return 'is not .style.<longhand> or .box.<x|y|width|height> of an element';
+    return 'is not .style.<longhand>, .layout.<longhand> or .box.<x|y|width|height> of an element';
   },
   events(tokens) {
     const [first, second] = tokens;

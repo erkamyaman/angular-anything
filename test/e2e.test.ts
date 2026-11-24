@@ -117,7 +117,7 @@ const bugs: Record<string, { layers: string[]; path: string }> = {
   request: { layers: ['side effects'], path: 'requests[0].body.name' },
   storage: { layers: ['side effects'], path: 'storage.name' },
   focus: { layers: ['style and geometry', 'side effects'], path: 'the first at focus' },
-  style: { layers: ['style and geometry'], path: 'html[1]/body[1]/main[1]/p[1].style.inline-size' },
+  style: { layers: ['style and geometry'], path: 'html[1]/body[1]/main[1]/p[1].style.margin-' },
 };
 
 let root: string;
@@ -151,6 +151,7 @@ function run(...args: string[]): Promise<{ status: number | string; output: stri
 }
 
 const gate = (url: string) => run('gate', 'tiny', '--source', 'original', '--url', url);
+const gateSame = (url: string) => run('gate', 'tiny', '--source', 'original', '--url', url, '--original-url', original);
 const recorded = (...path: string[]) => join(root, 'recordings', 'original', 'save', ...path);
 const exists = (file: string) => access(file).then(
   () => true,
@@ -195,16 +196,17 @@ test('record launches Chromium, writes a locked recording and masks the noise of
   assert.match(output, /Recorded 1 of 1 cases into recordings\/original\./);
 
   const lock = JSON.parse(await readFile(recorded('lock.json'), 'utf8'));
-  const files = steps.flatMap((_, index) => [`0${index + 1}.json`, `0${index + 1}.png`]);
+  const files = steps.map((_, index) => `0${index + 1}.json`);
   assert.deepEqual(Object.keys(lock.files), [...files, 'recording.json'].sort());
   assert.match(lock.browser, /^chromium \d+\./);
 
   const recording = JSON.parse(await readFile(recorded('recording.json'), 'utf8'));
-  assert.equal(recording.format, 'angular-anything/recording@2');
+  assert.equal(recording.format, 'angular-anything/recording@3');
   assert.deepEqual(recording.screenshotNoise, []);
   assert.match(output, /noise dom html\[1\]\/body\[1\]\/main\[1\]\.attrs\.data-nonce: 8 values masked/);
   for (let step = 1; step <= steps.length; step++) {
     const stored = JSON.parse(await readFile(recorded(`0${step}.json`), 'utf8'));
+    assert.deepEqual(Object.values(stored.style).filter((entry: any) => entry.box || entry.layout), [], `step ${step}: no box and no laid-out value is stored`);
     const mask: Record<string, unknown> = { $aa: 'noise', kind: 'string' };
     if (step < steps.length) mask.group = 1;
     assert.deepEqual(stored.dom.children[0].children[0].attrs['data-nonce'], mask, `step ${step}: one value is tied across the steps of one load, the reload has its own`);
@@ -274,10 +276,10 @@ test('replay refuses a recording in another format and one that masks what the c
   const recording = await readFile(file, 'utf8');
   const testCase = await readFile(caseFile, 'utf8');
   try {
-    await writeFile(file, recording.replace('recording@2', 'recording@0'));
+    await writeFile(file, recording.replace('recording@3', 'recording@2'));
     const old = await run('replay', 'tiny', '--source', 'original', '--url', port);
     assert.equal(old.status, 1, old.output);
-    assert.match(old.output, /it is in the format angular-anything\/recording@0, not angular-anything\/recording@2/);
+    assert.match(old.output, /it is in the format angular-anything\/recording@2, not angular-anything\/recording@3, so it has to be recorded again/);
     await writeFile(file, recording);
     await writeFile(caseFile, JSON.stringify({ ...JSON.parse(testCase), noise: undefined }));
     const masked = await run('replay', 'tiny', '--source', 'original', '--url', port);
@@ -290,18 +292,24 @@ test('replay refuses a recording in another format and one that masks what the c
 });
 
 test('gate passes for the same page on another origin', async () => {
-  const { status, output } = await gate(port);
+  const alone = await gate(port);
+  assert.equal(alone.status, 0, alone.output);
+  assert.match(alone.output, /0 identical, 0 different, 0 masked, 8 not compared\.$/m);
+  assert.match(alone.output, /^Sizes, positions and screenshots were not compared: no --original-url was given\.$/m);
+  assert.equal(JSON.parse(await readFile(join(root, 'reports', 'original', 'report.json'), 'utf8')).original, null);
+  const { status, output } = await gateSame(port);
   assert.equal(status, 0, output);
   assert.match(output, /^angular-anything gate: PASS$/m);
   assert.match(output, /^PASS {2}save {2}8 steps, frames: 4 4 4 379 4 4 4 4$/m);
   assert.match(output, /^Values not compared because the case names them as noise: 8\.$/m);
-  assert.match(output, /8 identical, 0 different, 0 masked\.$/m);
+  assert.match(output, /8 identical, 0 different, 0 masked, 0 not compared\.$/m);
+  assert.doesNotMatch(output, /were not compared/);
   assert.equal(JSON.parse(await readFile(join(root, 'reports', 'original', 'report.json'), 'utf8')).result, 'pass');
 });
 
 for (const [bug, expected] of Object.entries(bugs)) {
   test(`gate fails for ?bug=${bug} and names ${expected.layers.join(' and ')}`, async () => {
-    const { status, output } = await gate(`${port}/?bug=${bug}`);
+    const { status, output } = await gateSame(`${port}/?bug=${bug}`);
     assert.equal(status, 1, output);
     assert.match(output, /^angular-anything gate: FAIL$/m);
     assert.deepEqual(failingLayers(output), expected.layers, output);
@@ -309,15 +317,44 @@ for (const [bug, expected] of Object.entries(bugs)) {
   });
 }
 
+test('without the original the style bug fails at its declared value only, with it also at the sizes it changes', async () => {
+  const alone = await gate(`${port}/?bug=style`);
+  assert.equal(alone.status, 1, alone.output);
+  const paths = async () =>
+    JSON.parse(await readFile(join(root, 'reports', 'original', 'report.json'), 'utf8')).cases[0].steps[0].layers.style.first.map(
+      (difference: { path: string }) => difference.path.replace('html[1]/body[1]/main[1]/p[1]', 'p'),
+    );
+  assert.deepEqual(await paths(), ['p.style.margin-inline-start', 'p.style.margin-left']);
+  const same = await gateSame(`${port}/?bug=style`);
+  assert.equal(same.status, 1, same.output);
+  assert.deepEqual((await paths()).sort(), [
+    'p.box.width',
+    'p.box.x',
+    'p.layout.inline-size',
+    'p.layout.perspective-origin',
+    'p.layout.transform-origin',
+    'p.layout.width',
+    'p.style.margin-inline-start',
+    'p.style.margin-left',
+  ]);
+});
+
+test('an original that does not match its recording fails the gate by name, and no size is compared', async () => {
+  const { status, output } = await run('gate', 'tiny', '--source', 'original', '--url', port, '--original-url', `${original}/?bug=text`);
+  assert.equal(status, 1, output);
+  assert.match(output, /^ {6}error: the original at http:\/\/127\.0\.0\.1:\d+\/\?bug=text does not match its recording: step 3, accessibility at tree\/main\[1\]\/paragraph\[1\]\.text: expected "saved Ada", actual "stored Ada"; sizes, positions and screenshots were not compared$/m);
+  assert.match(output, /0 identical, 0 different, 0 masked, 8 not compared\.$/m);
+});
+
 test('gate passes when only pixels differ, and reports the screenshots as different', async () => {
-  const { status, output } = await gate(`${port}/?bug=pixels`);
+  const { status, output } = await gateSame(`${port}/?bug=pixels`);
   assert.equal(status, 0, output);
   assert.match(output, /^angular-anything gate: PASS$/m);
-  assert.match(output, /0 identical, 8 different, 0 masked\.$/m);
+  assert.match(output, /0 identical, 8 different, 0 masked, 0 not compared\.$/m);
 });
 
 test('replay writes the report, the summary and the screenshots that differ, and exits 1 on a mismatch', async () => {
-  const { status, output } = await run('replay', 'tiny', '--source', 'original', '--url', `${port}/?bug=text`);
+  const { status, output } = await run('replay', 'tiny', '--source', 'original', '--url', `${port}/?bug=text`, '--original-url', original);
   assert.equal(status, 1, output);
   const reports = join(root, 'reports', 'original');
   const report = JSON.parse(await readFile(join(reports, 'report.json'), 'utf8'));
@@ -329,6 +366,7 @@ test('replay writes the report, the summary and the screenshots that differ, and
   assert.equal(report.cases[0].steps[2].screenshot, 'different');
   assert.equal(report.cases[0].steps[1].screenshot, 'identical');
   await access(join(reports, 'save', '03.png'));
+  await access(join(reports, 'save', '03.original.png'));
   assert.ok(output.includes(await readFile(join(reports, 'summary.txt'), 'utf8')));
 });
 
@@ -500,9 +538,9 @@ c.fillRect(0, 0, 16, 16);
   assert.match(recorded.output, /^ {6}screenshots that differed between the two runs, at step 1$/m);
   const recording = JSON.parse(await readFile(join(root, 'recordings', 'pixel', 'save', 'recording.json'), 'utf8'));
   assert.deepEqual(recording.screenshotNoise, [1]);
-  const gated = await run('gate', 'pixel', '--source', 'pixel', '--url', pixel);
+  const gated = await run('gate', 'pixel', '--source', 'pixel', '--url', pixel, '--original-url', pixel);
   assert.equal(gated.status, 0, gated.output);
-  assert.match(gated.output, /Screenshots \(soft, they never fail the gate\): 0 identical, 0 different, 1 masked\./);
+  assert.match(gated.output, /Screenshots \(soft, they never fail the gate\): 0 identical, 0 different, 1 masked, 0 not compared\./);
 });
 
 test('record exits 1 when one case of the suite fails, and records the others', async () => {
@@ -566,4 +604,29 @@ test('record leaves the recording of another suite with the same case id alone a
   } finally {
     await rm(other, { recursive: true });
   }
+});
+
+test('a box of random width passes against itself with the original when the case names its paths as noise', async () => {
+  const random = await serve(
+    `<!doctype html><html lang="en"><head><title>Random</title></head><body><main><div id="box" style="height: 20px; background: red">box</div></main><script>
+document.getElementById('box').style.width = (100 + Math.floor(Math.random() * 100)) + 'px';
+</script></body></html>`,
+  );
+  const folder = join(root, 'cases', 'random', 'save');
+  await mkdir(folder, { recursive: true });
+  const lone = { format: 'angular-anything/case@1', id: 'save', viewport: { width: 800, height: 600 }, steps: steps.slice(0, 1) };
+  await writeFile(join(folder, 'case.json'), JSON.stringify(lone));
+  let recorded = await run('record', 'random', '--source', 'random', '--url', random);
+  for (let attempt = 0; recorded.status === 0 && attempt < 5; attempt++) recorded = await run('record', 'random', '--source', 'random', '--url', random);
+  assert.equal(recorded.status, 1, recorded.output);
+  const noise = recorded.output.split('\n').filter((line) => line.trim().startsWith('{"layer"')).map((line) => JSON.parse(line));
+  assert.ok(noise.some((entry) => entry.path.endsWith('.box.width')), recorded.output);
+  await writeFile(join(folder, 'case.json'), JSON.stringify({ ...lone, noise }));
+  const again = await run('record', 'random', '--source', 'random', '--url', random);
+  assert.equal(again.status, 0, again.output);
+  for (let gate = 0; gate < 3; gate++) {
+    const gated = await run('gate', 'random', '--source', 'random', '--url', random, '--original-url', random);
+    assert.equal(gated.status, 0, gated.output);
+  }
+  await rm(join(root, 'cases', 'random'), { recursive: true });
 });

@@ -259,7 +259,8 @@ test('every computed longhand is captured, listed where it differs from the pare
   assert.ok(Object.keys(style['html[1]'].style).length > 300, 'the html element lists every longhand');
   assert.equal(style['html[1]'].style.filter, 'none');
   assert.equal(style[`${body}/ul[1]`].style.filter, 'opacity(0)');
-  assert.equal(style[`${body}/ul[1]`].style['--gap'], '4px');
+  assert.equal(style[`${body}/ul[1]`].style['--gap'], '[laid out]', 'a custom property that holds a length is a size');
+  assert.equal(style[`${body}/ul[1]`].layout?.['--gap'], '4px');
   assert.equal(style[`${body}/ul[1]`].style.color, undefined, 'the same value as the parent is not repeated');
 
   const item = style[`${body}/ul[1]/li[1]`].style;
@@ -828,4 +829,47 @@ test('custom properties of the computed style are stored in the order of their n
   const custom = keys.filter((key) => key.startsWith('--'));
   assert.deepEqual(custom, [...names].sort());
   assert.equal(keys.findIndex((key) => key.startsWith('--')), keys.length - custom.length, 'the custom properties come last');
+});
+
+test('a custom element that Angular created, that no one registered and that renders as display: contents is no part of the DOM', async () => {
+  const wrapped = (tag: string, attributes = '', mark = true, display = 'contents') => `
+    <style>${tag} { display: ${display} }</style>
+    <main><h1>x</h1><${tag} ${attributes}><section aria-label="n">a</section><p>b</p></${tag}><p>c</p></main>
+    <script>${mark ? `document.querySelector('${tag}').__ngContext__ = 7;` : ''}</script>`;
+  const plain = '<main><h1>x</h1><section aria-label="n">a</section><p>b</p><p>c</p></main>';
+  assert.equal(await same(wrapped('ngx-toaster'), plain), true, 'the wrapper of a library port');
+  const captured = await capture(wrapped('ngx-toaster'));
+  assert.deepEqual(Object.keys(captured.style).filter((path) => path.includes('main[1]/')).sort(), [
+    'html[1]/body[1]/main[1]/h1[1]',
+    'html[1]/body[1]/main[1]/p[1]',
+    'html[1]/body[1]/main[1]/p[2]',
+    'html[1]/body[1]/main[1]/section[1]',
+  ]);
+  assert.equal(await same(wrapped('ngx-toaster', '', false), plain), false, 'not created by Angular');
+  assert.equal(await same(wrapped('ngx-toaster', 'data-x="1"'), plain), false, 'with an attribute');
+  assert.equal(await same(wrapped('ngx-toaster', '', true, 'block'), plain), false, 'drawn as a box');
+  assert.equal(await same(wrapped('toaster'), plain), false, 'not a custom element name');
+  const registered = `${wrapped('ngx-toaster')}<script>customElements.define('ngx-toaster', class extends HTMLElement {})</script>`;
+  assert.equal(await same(registered, plain), false, 'a registered custom element');
+});
+
+test('a length that comes from layout is stored as written, and the laid-out value is kept apart for the same session', async () => {
+  const { style, dom: tree } = await capture(`<style>main { width: 50%; margin: 0 auto } p { margin-left: 3px; width: 120px } p::before { content: "a"; display: inline-block; width: 50%; margin-left: 2px }</style>
+    <main><p>x</p><span style="--h: 58px; --c: red">y</span></main><p>z</p>`);
+  const main = style['html[1]/body[1]/main[1]'];
+  assert.equal(main.style.width, '50%');
+  assert.equal(main.style['margin-left'], 'auto');
+  assert.match(main.layout?.width ?? '', /^\d+(\.\d+)?px$/);
+  assert.match(main.layout?.['margin-left'] ?? '', /^\d+(\.\d+)?px$/);
+  const p = style['html[1]/body[1]/main[1]/p[1]'];
+  assert.equal(p.style['margin-left'], '3px', 'a length that is written stays a stored value');
+  assert.equal(p.style.width, '120px');
+  assert.equal(p.layout?.width, undefined, 'nothing is kept apart when the written value is the laid-out one');
+  const before = style['html[1]/body[1]/main[1]/p[1]/::before'];
+  assert.equal(before.style.width, '[laid out]', 'a pseudo-element has no declared value, so a listed name is a size');
+  assert.equal(before.layout?.width, '60px');
+  assert.equal(before.style['margin-left'], '2px', 'a name that is not listed is stored');
+  const [span] = find(tree, 'span');
+  assert.deepEqual(span.inline, { '--h': '[laid out]', '--c': 'red' });
+  assert.deepEqual((span as { layout?: unknown }).layout, { '--h': '58px' });
 });

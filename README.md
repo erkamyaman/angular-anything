@@ -14,6 +14,7 @@ Replays every recorded interaction of the original against the port.
 - `fixtures/server.ts`, which serves the built fixtures and the mock API.
 - `cases/fixture`, nineteen cases for the Tasks fixture.
 - `recordings/react`, `recordings/vue` and `recordings/angularjs`, the locked recordings of the three originals.
+- `trials/todomvc` and `trials/sonner`, the two trial ports (an original and its Angular port each), with `cases/todomvc`, `cases/sonner`, `recordings/todomvc-react` and `recordings/sonner-react`.
 
 ## Commands
 
@@ -39,6 +40,7 @@ pnpm aa record fixture --source react --url http://localhost:4101             # 
 pnpm aa gate fixture --source react --url http://localhost:4104               # checks the lock, then replays against the port
 pnpm aa replay fixture --source react --url http://localhost:4104             # the same without the lock check
 pnpm aa gate fixture --source react --url 'http://localhost:4104/?bug=aria'   # a seeded bug, exits 1
+pnpm aa gate fixture --source react --url http://localhost:4104 --original-url http://localhost:4101   # also sizes, positions and screenshots
 ```
 
 The sources are `react`, `vue` and `angularjs`. The seeded bugs are `double-event`, `missing-class`, `aria`, `text`, `request`, `storage`, `focus` and `style`.
@@ -78,13 +80,24 @@ After each step the page settles and one observation is captured:
 
 - the accessibility snapshot and the literal `aria-*`, `role`, `tabindex` and `required` attributes
 - the DOM from the `html` element down, without `head`, `script`, `style` and `link`, and without the marks a framework leaves where that framework is proven for the element (see "The canonical DOM")
-- every computed CSS longhand of each element and of each `::before` and `::after` that has content, and the border box of each element (rounded to 0.01 px at capture and compared exactly: there is no tolerance, a box 0.01 px wider differs)
+- every computed CSS longhand of each element and of each `::before` and `::after` that has content, and the border box of each element (rounded to 0.01 px at capture and compared exactly: there is no tolerance, a box 0.01 px wider differs). Sizes and positions are split off, see "Sizes, positions and screenshots"
 - the events sent through `window.__aa.emit`
 - the requests, `localStorage`, the URL, the document title and the focused element, with every string that has structure compared by its parts (see "Masks and noise")
 - the dialogs and windows of the page, in the order in which they happened (see "Dialogs and windows")
 - a screenshot, which is reported and never fails the gate
 
 In a recorded observation an element lists only the longhands whose value differs from its parent element. The `html` element lists all of them.
+
+## Sizes, positions and screenshots
+
+Sizes, positions and screenshots change with the fonts and the machine while the page and its CSS stay the same. So they are compared only against the original run again in the same command: `gate` and `replay` take `--original-url`. Everything else is compared against the stored recording, on any machine.
+
+- A longhand whose value the browser took from layout is split. The capture asks the browser twice: `getComputedStyle` for the laid-out value and `computedStyleMap()` for the declared one (`auto`, `50%`, `3px`). Where both give the same text, the value is stored as before. Where they differ, the declared value is stored at `.style.<longhand>` and compared anywhere, and the laid-out value is kept at `.layout.<longhand>` and compared only in the same session. A probe on the `html` element checks first that the browser gives a declared value; where it does not, and always for `::before` and `::after`, a fixed list of names is used instead (`width`, `height`, `inline-size`, `block-size`, `perspective-origin`, `transform-origin`, `top`, `right`, `bottom`, `left` and the four `inset-*`), stored as `[laid out]`.
+- A custom property whose value is a length in pixels (`--initial-height: 58px`, often measured by a script) counts as a size: stored as `[laid out]`, in the computed style and in a `style` attribute, with its value compared only in the same session.
+- The border box of each element (`.box.x`, `.y`, `.width`, `.height`) and the screenshot of each step are compared only in the same session.
+- `record` stores none of these: the recording (format `angular-anything/recording@3`) holds no box, no laid-out value and no PNG, so its lock covers only what a gate compares from it, and a recording made on one machine gates on another. `record` still runs the original twice and fails on sizes or screenshots that differ between the runs, as before; a case names such sizes as noise (`.box.width`, `.layout.width`). A recording in an older format is refused with a message that says to record it again.
+- With `--original-url` the original is run first, the way the port is run: the same case, the stored frames, a fresh browser context. Its stored layers must equal the recording in every step and it must be at rest after the stored frames. If not, the case fails with `the original at <url> does not match its recording`, the first difference, and no size, position or screenshot is compared. Then the port runs, and its sizes, positions and screenshots are compared with those of the original's run, with the case's noise masked on both. When a screenshot differs, the report folder gets both images (`03.png` and `03.original.png`). The network tape is not built yet, so `--original-url` serves the page and its API.
+- Without `--original-url` none of this is compared. The summary says so (`Sizes, positions and screenshots were not compared: no --original-url was given.`), `report.json` has `"original": null`, and the screenshots count as not compared. The stable screenshot is still taken on the port, so both sides wait the same way.
 
 ## The canonical DOM
 
@@ -110,6 +123,8 @@ An Angular component is mounted on an element that the original already has, so 
 When the only differences of a step in the DOM are attributes with an empty value that only the port has and that the browser does not read on that element, the summary of the gate names this convention under the step. The line says that an attribute is not what it seems and lists the attribute names. It does not appear when anything else differs in the DOM of that step, when the attribute has a value, when the original has it too, or when the browser reads it on that element (`hidden`, `title`, `tabindex`, `aria-*` and the others that are properties or global attributes). It is a hint, it does not change the result.
 
 The Tasks fixture port uses `li.task` for its row component, and every observation and screenshot of the 19 cases is the same as with the aliased input.
+
+A library port may keep the API of a component of its own (`<ngx-toaster>` that renders the `section` of the original inside it) when its element leaves no trace: the capture leaves out an element, and keeps its children in its place, when its name holds a dash, Angular created it, no custom element of that name is registered, it has no attribute, and it renders as `display: contents` (for example with `styles: 'ngx-toaster { display: contents }'` and `ViewEncapsulation.None`). Anything else about such an element, an attribute or a style that it passes on to its children, still shows as a difference.
 
 ## Dialogs and windows
 

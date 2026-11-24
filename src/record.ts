@@ -6,9 +6,10 @@ import playwrightPackage from 'playwright/package.json' with { type: 'json' };
 import { describeStep, loadSuite } from './case.ts';
 import { writeLock } from './lock.ts';
 import { audit, compile, maskObservations, normalize } from './noise.ts';
+import { stored as storedLayers } from './layout.ts';
 import { runCase } from './run.ts';
 
-export const RECORDING_FORMAT = 'angular-anything/recording@2';
+export const RECORDING_FORMAT = 'angular-anything/recording@3';
 export const RECORDING_FILE = 'recording.json';
 
 export type Recording = {
@@ -110,8 +111,7 @@ export async function record({ root, suite, source, url }: Options): Promise<num
 
       await mkdir(directory, { recursive: true });
       for (const [index, step] of first.steps.entries()) {
-        await writeFile(join(directory, `${stepFile(index)}.json`), toJson(observations[index]));
-        await writeFile(join(directory, `${stepFile(index)}.png`), step.screenshot);
+        await writeFile(join(directory, `${stepFile(index)}.json`), toJson(storedLayers(observations[index])));
       }
       const recording: Recording = {
         format: RECORDING_FORMAT,

@@ -5,12 +5,17 @@ export type DomNode =
       attrs?: Record<string, string>;
       inline?: Record<string, string>;
       props?: Record<string, string | boolean>;
+      layout?: Record<string, string>;
       children?: DomNode[];
     };
 
 export type Box = { x: number; y: number; width: number; height: number };
 
-export type Style = Record<string, { style: Record<string, string>; box?: Box }>;
+export type Style = Record<string, { style: Record<string, string>; box?: Box; layout?: Record<string, string> }>;
+
+export const LAID_OUT = '[laid out]';
+
+export const LAID_OUT_NAMES = 'width height inline-size block-size perspective-origin transform-origin top right bottom left inset-block-start inset-block-end inset-inline-start inset-inline-end';
 
 export type Unread = { path: string; attribute: string }[];
 
@@ -500,12 +505,51 @@ export function capturePage(): PageCapture {
     return name !== undefined && typeof (el as unknown as Record<string, unknown>)[name] === 'boolean';
   };
 
-  const longhands = (computed: CSSStyleDeclaration): Record<string, string> =>
-    Object.fromEntries(
-      [...[...computed].filter((property) => !property.startsWith('--')), ...[...computed].filter((property) => property.startsWith('--')).sort()].map(
-        (property) => [property, computed.getPropertyValue(property).replace(originPattern, 'url($1[page-origin]')],
-      ),
-    );
+  const laidOut = '[laid out]';
+  const laidOutNames = new Set(
+    'width height inline-size block-size perspective-origin transform-origin top right bottom left inset-block-start inset-block-end inset-inline-start inset-inline-end'.split(' '),
+  );
+  const isLength = (value: string) => /^-?(\d+\.?\d*|\.\d+)(e-?\d+)?px$/.test(value.trim());
+  const probe = (() => {
+    const html = document.documentElement;
+    if (typeof html.computedStyleMap !== 'function') return false;
+    return html.computedStyleMap().get('width')?.toString() === 'auto' && getComputedStyle(html).width.endsWith('px');
+  })();
+
+  type Longhands = { values: Record<string, string>; layout: Record<string, string> };
+
+  const longhands = (computed: CSSStyleDeclaration, el?: Element): Longhands => {
+    const declared = probe && el ? el.computedStyleMap() : undefined;
+    const values: Record<string, string> = {};
+    const layout: Record<string, string> = {};
+    const names = [...[...computed].filter((property) => !property.startsWith('--')), ...[...computed].filter((property) => property.startsWith('--')).sort()];
+    for (const property of names) {
+      const value = computed.getPropertyValue(property).replace(originPattern, 'url($1[page-origin]');
+      if (property.startsWith('--')) {
+        if (isLength(value)) {
+          values[property] = laidOut;
+          layout[property] = value;
+        } else {
+          values[property] = value;
+        }
+      } else if (!value.includes('px')) {
+        values[property] = value;
+      } else if (declared) {
+        const written = declared.get(property)?.toString();
+        values[property] = written ?? value;
+        if (written !== undefined && written !== value) layout[property] = value;
+      } else if (laidOutNames.has(property)) {
+        values[property] = laidOut;
+        layout[property] = value;
+      } else {
+        values[property] = value;
+      }
+    }
+    return { values, layout };
+  };
+
+  const changedLayout = (own: Record<string, string>, parent: Record<string, string> = {}) =>
+    Object.fromEntries(Object.entries(own).filter(([property, value]) => value !== parent[property]));
 
   const changed = (own: Record<string, string>, parent: Record<string, string> = {}) => {
     const result = Object.fromEntries(Object.entries(own).filter(([property, value]) => value !== parent[property]));
@@ -547,6 +591,18 @@ export function capturePage(): PageCapture {
   }
 
   const texts = new Map<Node, string>();
+
+  const isWrapper = (el: Element) =>
+    el.localName.includes('-') &&
+    '__ngContext__' in el &&
+    el.attributes.length === 0 &&
+    customElements.get(el.localName) === undefined &&
+    getComputedStyle(el).display === 'contents';
+
+  const childrenOf = (el: Element): ChildNode[] =>
+    [...el.childNodes].flatMap((child) =>
+      child.nodeType === Node.ELEMENT_NODE && isWrapper(child as Element) ? childrenOf(child as Element) : [child],
+    );
 
   function flow(container: Element): void {
     const tokens: ({ node: Text; collapse: string } | 'break' | 'atom')[] = [];
@@ -615,7 +671,7 @@ export function capturePage(): PageCapture {
     }
   }
 
-  function capture(el: Element, path: string, parentStyle?: Record<string, string>): DomNode {
+  function capture(el: Element, path: string, parentStyle?: Record<string, string>, parentLayout?: Record<string, string>): DomNode {
     paths.set(el, path);
     if (kindOf(el) !== 'inline' || el === document.documentElement) flow(el);
     const injector = typeof page.angular?.element === 'function' ? page.angular.element(el).injector() : undefined;
@@ -640,11 +696,18 @@ export function capturePage(): PageCapture {
     }
 
     const inline: Record<string, string> = {};
+    const inlineLayout: Record<string, string> = {};
     const declared = (el as HTMLElement).style;
     if (declared) {
       for (const property of declared) {
         const priority = declared.getPropertyPriority(property);
-        inline[property] = colourOf(property, inlineUrls(declared.getPropertyValue(property))) + (priority ? ` !${priority}` : '');
+        const value = colourOf(property, inlineUrls(declared.getPropertyValue(property)));
+        if (property.startsWith('--') && isLength(value)) {
+          inlineLayout[property] = value + (priority ? ` !${priority}` : '');
+          inline[property] = laidOut + (priority ? ` !${priority}` : '');
+        } else {
+          inline[property] = value + (priority ? ` !${priority}` : '');
+        }
       }
     }
 
@@ -674,16 +737,22 @@ export function capturePage(): PageCapture {
     }
     if (Object.keys(accessibility).length > 0) aria[path] = accessibility;
 
-    const ownStyle = longhands(getComputedStyle(el));
+    const own = longhands(getComputedStyle(el), el);
+    const ownStyle = own.values;
     const rect = el.getBoundingClientRect();
     style[path] = {
       style: changed(ownStyle, parentStyle),
       box: { x: round(rect.x), y: round(rect.y), width: round(rect.width), height: round(rect.height) },
     };
+    const ownLayout = changedLayout(own.layout, parentLayout);
+    if (Object.keys(ownLayout).length > 0) style[path].layout = ownLayout;
     for (const pseudo of ['::before', '::after']) {
       const computed = getComputedStyle(el, pseudo);
       if (computed.content === 'none') continue;
-      style[`${path}/${pseudo}`] = { style: changed(longhands(computed), ownStyle) };
+      const before = longhands(computed);
+      style[`${path}/${pseudo}`] = { style: changed(before.values, ownStyle) };
+      const pseudoLayout = changedLayout(before.layout, own.layout);
+      if (Object.keys(pseudoLayout).length > 0) style[`${path}/${pseudo}`].layout = pseudoLayout;
     }
 
     const children: DomNode[] = [];
@@ -694,14 +763,14 @@ export function capturePage(): PageCapture {
       text = '';
     };
     if (el.localName !== 'textarea') {
-      for (const child of el.childNodes) {
+      for (const child of childrenOf(el)) {
         if (child.nodeType === Node.TEXT_NODE) {
           text += texts.get(child) ?? '';
         } else if (child.nodeType === Node.ELEMENT_NODE && !ignoredTags.has((child as Element).localName)) {
           flushText();
           const tag = (child as Element).localName;
           counts[tag] = (counts[tag] ?? 0) + 1;
-          children.push(capture(child as Element, `${path}/${tag}[${counts[tag]}]`, ownStyle));
+          children.push(capture(child as Element, `${path}/${tag}[${counts[tag]}]`, ownStyle, own.layout));
         }
       }
     }
@@ -710,6 +779,7 @@ export function capturePage(): PageCapture {
     const node: Exclude<DomNode, string> = { tag: el.localName };
     if (Object.keys(attrs).length > 0) node.attrs = attrs;
     if (Object.keys(inline).length > 0) node.inline = inline;
+    if (Object.keys(inlineLayout).length > 0) node.layout = inlineLayout;
     if (Object.keys(props).length > 0) node.props = props;
     if (children.length > 0) node.children = children;
     return node;

@@ -550,3 +550,10 @@ Ten one-defect ports, one gate each (`planning/trials/sonner/variants.txt`):
 - Secrets (5c): not needed.
 
 So the next work for showcase use is 5b, and sonner adds a case 5b does not solve yet: sizes that the page itself measures and writes as text.
+
+## Afterwards (2026-11-24)
+
+Both open points were decided by the maintainer ("Go with yours") and built:
+
+- Q34 for libraries: a library port may keep a component element of its own when it leaves no trace (Angular created it, no custom element of that name is registered, no attribute, `display: contents`). The sonner port now has `<ngx-toaster>` and still passes 9 of 9; with the rule switched off it fails 9 of 9.
+- 5b is built, and a custom property whose value is a length in pixels counts as a size. sonner's `--initial-height` and `--front-toast-height` are now compared only against the original run again. Details in `planning/m2/step5b.md`.

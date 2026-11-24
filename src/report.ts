@@ -4,7 +4,7 @@ import type { Unread } from './page.ts';
 import { keyPath } from './path.ts';
 import { isObject } from './value.ts';
 
-export const REPORT_FORMAT = 'angular-anything/report@0';
+export const REPORT_FORMAT = 'angular-anything/report@1';
 const KEPT_DIFFERENCES = 10;
 
 export type StepReport = {
@@ -14,7 +14,7 @@ export type StepReport = {
   settleMs: number;
   captures: number;
   frames: number;
-  screenshot: 'identical' | 'different' | 'masked';
+  screenshot: 'identical' | 'different' | 'masked' | 'not compared';
   layers: Record<Layer, { differences: number; masked: number; first: Difference[] }>;
   convention: string[];
 };
@@ -35,6 +35,7 @@ export type Report = {
   suite: string;
   source: string;
   url: string;
+  original: string | null;
   playwright: string;
   browser: string;
   result: 'pass' | 'fail';
@@ -116,7 +117,7 @@ const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 export function summarize(report: Report): string {
   const lines = [
     `angular-anything ${report.command}: ${report.result === 'pass' ? 'PASS' : 'FAIL'}`,
-    `suite ${report.suite}, source ${report.source}, url ${report.url}`,
+    `suite ${report.suite}, source ${report.source}, url ${report.url}${report.original ? `, original ${report.original}` : ''}`,
     `Playwright ${report.playwright}, ${report.browser}`,
     '',
   ];
@@ -161,7 +162,8 @@ export function summarize(report: Report): string {
     `${failedCases} of ${report.cases.length} cases failed. ` +
       `${steps.filter((step) => step.result === 'fail').length} of ${steps.length} compared steps differ.`,
     `Values not compared because the case names them as noise: ${masked}.`,
-    `Screenshots (soft, they never fail the gate): ${shots('identical')} identical, ${shots('different')} different, ${shots('masked')} masked.`,
+    `Screenshots (soft, they never fail the gate): ${shots('identical')} identical, ${shots('different')} different, ${shots('masked')} masked, ${shots('not compared')} not compared.`,
   );
+  if (!report.original) lines.push('Sizes, positions and screenshots were not compared: no --original-url was given.');
   return lines.join('\n');
 }

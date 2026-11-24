@@ -35,11 +35,12 @@ const li = 'html[1]/body[1]/ul[1]/li[1]';
 function reportOf(port: DomNode, unread: { path: string; attribute: string }[], original = row({ class: 'task' })): Report {
   const layers = compareCase([observation(original)], [observation(port)])[0];
   return finish({
-    format: 'angular-anything/report@0',
+    format: 'angular-anything/report@1',
     command: 'gate',
     suite: 'fixture',
     source: 'react',
     url: 'http://localhost:4104/',
+    original: 'http://localhost:4101/',
     playwright: '1.65.1',
     browser: 'chromium 159.0.8154.6',
     result: 'fail',

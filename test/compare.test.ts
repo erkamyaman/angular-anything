@@ -254,11 +254,12 @@ function report(change: (port: Observation) => void, screenshot: 'identical' | '
   change(port);
   const layers = compareCase([observation()], [port])[0];
   return finish({
-    format: 'angular-anything/report@0',
+    format: 'angular-anything/report@1',
     command: 'gate',
     suite: 'fixture',
     source: 'react',
     url: 'http://localhost:4104/',
+    original: 'http://localhost:4101/',
     playwright: '1.65.1',
     browser: 'chromium 159.0.8154.6',
     result: 'fail',
@@ -285,7 +286,7 @@ test('the summary names the failing layer, the step, the first differing path an
   assert.equal(
     summarize(failed),
     `angular-anything gate: FAIL
-suite fixture, source react, url http://localhost:4104/
+suite fixture, source react, url http://localhost:4104/, original http://localhost:4101/
 Playwright 1.65.1, chromium 159.0.8154.6
 
 FAIL  details
@@ -299,7 +300,7 @@ FAIL  details
 
 1 of 1 cases failed. 1 of 1 compared steps differ.
 Values not compared because the case names them as noise: 0.
-Screenshots (soft, they never fail the gate): 1 identical, 0 different, 0 masked.`,
+Screenshots (soft, they never fail the gate): 1 identical, 0 different, 0 masked, 0 not compared.`,
   );
 });
 
@@ -310,7 +311,7 @@ test('a report passes only when every step of every case ran and matched', () =>
 
   const different = report(() => {}, 'different');
   assert.equal(different.result, 'pass', 'a screenshot never fails the gate');
-  assert.match(summarize(different), /0 identical, 1 different, 0 masked\.$/);
+  assert.match(summarize(different), /0 identical, 1 different, 0 masked, 0 not compared\.$/);
 
   const unfinished = report(() => {});
   unfinished.cases[0].stepCount = 2;

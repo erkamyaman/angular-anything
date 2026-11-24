@@ -2,17 +2,29 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
 import { describeStep, loadSuite } from './case.ts';
-import { compareCase } from './compare.ts';
+import { compareCase, LAYERS, LAYER_NAMES } from './compare.ts';
+import type { Layer, LayerResult } from './compare.ts';
+import { laidOut, stored } from './layout.ts';
 import type { Observation } from './compare.ts';
 import { checkLock, LOCK_FILE } from './lock.ts';
-import { compile, normalize, placeholdersOutside } from './noise.ts';
+import { compile, maskObservations, normalize, placeholdersOutside } from './noise.ts';
 import { RECORDING_FILE, RECORDING_FORMAT, stepFile, toJson, versions } from './record.ts';
 import type { Options, Recording } from './record.ts';
 import { finish, REPORT_FORMAT, stepReport, summarize } from './report.ts';
 import type { CaseReport, Report, StepReport } from './report.ts';
 import { runCase } from './run.ts';
 
-export async function replay({ root, suite, source, url, gate }: Options & { gate: boolean }): Promise<number> {
+function firstDifference(results: Record<Layer, LayerResult>[]): string | undefined {
+  for (const [index, layers] of results.entries()) {
+    for (const layer of LAYERS) {
+      const [first] = layers[layer].differences;
+      if (first) return `step ${index + 1}, ${LAYER_NAMES[layer]} at ${first.path}: expected ${JSON.stringify(first.expected)}, actual ${JSON.stringify(first.actual)}`;
+    }
+  }
+  return undefined;
+}
+
+export async function replay({ root, suite, source, url, gate, original }: Options & { gate: boolean; original?: URL }): Promise<number> {
   const out = join(root, 'reports', source);
   const cases = await loadSuite(root, suite);
   const browser = await chromium.launch();
@@ -24,6 +36,7 @@ export async function replay({ root, suite, source, url, gate }: Options & { gat
       suite,
       source,
       url: url.href,
+      original: original?.href ?? null,
       ...pins,
       result: 'fail',
       cases: [],
@@ -69,34 +82,50 @@ export async function replay({ root, suite, source, url, gate }: Options & { gat
           throw new Error('its stored frames are not a whole number above 0 for each step, so it has to be recorded again');
         }
         const noise = compile(testCase.noise ?? []);
-        const run = await runCase(browser, testCase, url, undefined, frames);
         const expected: Observation[] = [];
-        for (const index of run.steps.keys()) {
+        for (const index of frames.keys()) {
           expected.push(JSON.parse(await readFile(join(recorded, `${stepFile(index)}.json`), 'utf8')));
         }
         const outside = placeholdersOutside(noise, expected);
         if (outside.length > 0) {
           throw new Error(`it masks values that the case does not name as noise (${outside[0]}), so it has to be recorded again`);
         }
-        const results = compareCase(
-          expected,
-          run.steps.map((step) => normalize(step.observation, noise)),
-        );
+        let again: Awaited<ReturnType<typeof runCase>> | undefined;
+        let mismatch: string | undefined;
+        if (original) {
+          again = await runCase(browser, testCase, original, undefined, frames);
+          mismatch = again.error ?? firstDifference(compareCase(expected, again.steps.map((step) => stored(normalize(step.observation, noise)))));
+        }
+        const run = await runCase(browser, testCase, url, undefined, frames);
+        const actual = run.steps.map((step) => normalize(step.observation, noise));
+        const results = compareCase(expected.slice(0, actual.length), actual.map(stored));
+        const sameSession = again && !mismatch && again.steps.length === run.steps.length ? again : undefined;
+        if (sameSession) {
+          const masked = maskObservations(noise, sameSession.steps.map((step) => step.observation), sameSession.steps.map((step) => step.observation)).observations;
+          const sizes = compareCase(masked.map(laidOut), actual.map(laidOut));
+          sizes.forEach((layers, index) => {
+            for (const layer of LAYERS) {
+              results[index][layer].differences.push(...layers[layer].differences);
+              results[index][layer].masked += layers[layer].masked;
+            }
+          });
+        }
         for (const [index, step] of run.steps.entries()) {
           const name = stepFile(index);
           const layers = results[index];
-          let screenshot: StepReport['screenshot'] = 'masked';
-          if (!recording.screenshotNoise.includes(index + 1)) {
-            const same = step.screenshot.equals(await readFile(join(recorded, `${name}.png`)));
-            screenshot = same ? 'identical' : 'different';
-          }
-          if (screenshot === 'different') {
+          let screenshot: StepReport['screenshot'] = 'not compared';
+          const before = sameSession?.steps[index]?.screenshot;
+          if (before && recording.screenshotNoise.includes(index + 1)) screenshot = 'masked';
+          else if (before) screenshot = step.screenshot.equals(before) ? 'identical' : 'different';
+          if (screenshot === 'different' && before) {
             await mkdir(join(out, testCase.id), { recursive: true });
             await writeFile(join(out, testCase.id, `${name}.png`), step.screenshot);
+            await writeFile(join(out, testCase.id, `${name}.original.png`), before);
           }
           item.steps.push(stepReport(index + 1, describeStep(testCase.steps[index]), step, screenshot, layers, step.unread));
         }
-        item.error = run.error;
+        item.error = mismatch ? `the original at ${original!.href} does not match its recording: ${mismatch}; sizes, positions and screenshots were not compared` : run.error;
+        if (mismatch && run.error) item.error += `; the port: ${run.error}`;
       } catch (error) {
         item.error = `cannot replay against the recording: ${(error as Error).message}`;
       }

@@ -12,7 +12,7 @@ const save = () =>
 @Component({
   selector: '[id=root]',
   imports: [Toaster],
-  template: `<main class="demo"><h1>Toasts</h1><div class="buttons"><button type="button" (click)="plain()">Default</button><button type="button" (click)="described()">Description</button><button type="button" (click)="success()">Success</button><button type="button" (click)="error()">Error</button><button type="button" (click)="withAction()">Action</button><button type="button" (click)="closable()">Close button</button><button type="button" (click)="promised()">Promise</button><button type="button" (click)="dismissAll()">Dismiss all</button></div><section data-react-aria-top-layer="true"></section></main>`,
+  template: `<main class="demo"><h1>Toasts</h1><div class="buttons"><button type="button" (click)="plain()">Default</button><button type="button" (click)="described()">Description</button><button type="button" (click)="success()">Success</button><button type="button" (click)="error()">Error</button><button type="button" (click)="withAction()">Action</button><button type="button" (click)="closable()">Close button</button><button type="button" (click)="promised()">Promise</button><button type="button" (click)="dismissAll()">Dismiss all</button></div><ngx-toaster></ngx-toaster></main>`,
 })
 export class App {
   protected plain() {

@@ -1,5 +1,5 @@
 {
-  "format": "angular-anything/recording@2",
+  "format": "angular-anything/recording@3",
   "suite": "todomvc",
   "case": "clear-completed",
   "source": "todomvc-react",

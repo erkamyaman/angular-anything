@@ -28,6 +28,7 @@ const report = (cases: CaseReport[]): Report => ({
   suite: 'fixture',
   source: 'react',
   url: 'http://localhost:4104/',
+  original: 'http://localhost:4101/',
   playwright: '1.65.1',
   browser: 'chromium 159',
   result: 'fail',
@@ -68,7 +69,7 @@ test('the summary names the first failing step, the layers that differ and the s
   assert.match(text, /^ {6}step 2 of 2: click button "Go" \(4 frames\)$/m);
   assert.match(text, /side effects: 1 difference, the first at a/);
   assert.match(text, /^1 of 1 cases failed\. 1 of 2 compared steps differ\.$/m);
-  assert.match(text, /1 identical, 1 different, 0 masked\./);
+  assert.match(text, /1 identical, 1 different, 0 masked, 0 not compared\./);
 });
 
 test('a URL that is shown as parts is also written out, for a window, a request and the page', () => {
