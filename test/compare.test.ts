@@ -472,3 +472,21 @@ test('the method and the URL of a request differ, whatever the method is', () =>
     },
   );
 });
+
+test('the two names that browsers report for the Mac system font are one font, in font-family only', () => {
+  const linux = observation();
+  const mac = observation();
+  linux.style[count].style['font-family'] = 'ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI"';
+  mac.style[count].style['font-family'] = 'ui-sans-serif, -apple-system, "system-ui", "Segoe UI"';
+  assert.deepEqual(compare(linux, mac).style, []);
+  assert.deepEqual(compare(mac, linux).style, []);
+  mac.style[count].style['font-family'] = 'ui-sans-serif, -apple-system, "Segoe UI"';
+  assert.equal(compare(linux, mac).style.length, 1);
+  mac.style[count].style['font-family'] = 'ui-sans-serif, -apple-system, system-ui, "Segoe UI"';
+  assert.equal(compare(linux, mac).style.length, 1);
+  const left = observation();
+  const right = observation();
+  left.events[0].payload = { font: 'BlinkMacSystemFont' };
+  right.events[0].payload = { font: '"system-ui"' };
+  assert.equal(compare(left, right).events.length, 1);
+});

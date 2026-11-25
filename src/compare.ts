@@ -46,6 +46,14 @@ type Tree = string | { children?: Tree[]; [field: string]: unknown };
 
 type Out = { differences: Difference[]; seen: Seen[]; layer: Layer };
 
+const fontNames = (value: string) => value.replace(/(^|, )BlinkMacSystemFont(?=,|$)/g, '$1"system-ui"');
+
+const sameFonts = (path: string, expected: unknown, actual: unknown) =>
+  /\.(style|inline)\.font-family$/.test(path) &&
+  typeof expected === 'string' &&
+  typeof actual === 'string' &&
+  fontNames(expected) === fontNames(actual);
+
 const masked = (mask: Placeholder) => `a masked ${mask.kind}`;
 
 function diffValue(expected: unknown, actual: unknown, path: string, out: Out, raw = false): void {
@@ -83,7 +91,7 @@ function diffValue(expected: unknown, actual: unknown, path: string, out: Out, r
         out,
       );
     }
-  } else if (expected !== actual) {
+  } else if (expected !== actual && !sameFonts(path, expected, actual)) {
     out.differences.push({ path, expected, actual });
   }
 }
