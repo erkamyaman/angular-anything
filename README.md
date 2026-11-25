@@ -7,11 +7,11 @@ Replays every recorded interaction of the original against the port.
 ## What exists so far
 
 - A pnpm workspace with one install for the tool and the fixtures.
-- `src/`, the CLI and the verifier. `doctor`, `record`, `replay` and `gate` work.
-- `test/`, the unit tests and one end-to-end test that drives the CLI against a small page.
+- `src/`, the CLI and the verifier. `doctor`, `record`, `replay`, `gate` and `drift` work.
+- `test/`, the unit tests and end-to-end tests that drive the CLI against small pages.
 - `fixtures/react`, `fixtures/vue` and `fixtures/angularjs`, the Tasks fixture written three times as an original, and `fixtures/angular`, its Angular port. The port misbehaves on purpose when the URL has `?bug=<name>`.
 - `fixtures/shared/fixture.css`, the one stylesheet that all four load.
-- `fixtures/server.ts`, which serves the built fixtures and the mock API.
+- `fixtures/server.ts`, which serves the built fixtures and the mock API. `record` asks that API, `gate` and `replay` do not (see "The network tape").
 - `cases/fixture`, nineteen cases for the Tasks fixture.
 - `recordings/react`, `recordings/vue` and `recordings/angularjs`, the locked recordings of the three originals.
 - `trials/todomvc` and `trials/sonner`, the two trial ports (an original and its Angular port each), with `cases/todomvc`, `cases/sonner`, `recordings/todomvc-react` and `recordings/sonner-react`.
@@ -41,11 +41,14 @@ pnpm aa gate fixture --source react --url http://localhost:4104               # 
 pnpm aa replay fixture --source react --url http://localhost:4104             # the same without the lock check
 pnpm aa gate fixture --source react --url 'http://localhost:4104/?bug=aria'   # a seeded bug, exits 1
 pnpm aa gate fixture --source react --url http://localhost:4104 --original-url http://localhost:4101   # also sizes, positions and screenshots
+pnpm aa gate fixture --source react --url http://localhost:4104 --redact      # shapes only, no values and no screenshots
+pnpm aa gate fixture --source react --url http://localhost:4104 --original-source fixtures/react --port-source fixtures/angular
+pnpm aa drift fixture --source react --url http://localhost:4104 --original-url http://localhost:4101  # which side moved
 ```
 
 The sources are `react`, `vue` and `angularjs`. The seeded bugs are `double-event`, `missing-class`, `aria`, `text`, `request`, `storage`, `focus` and `style`.
 
-`record` exits 0 when every case was recorded. Two suites can share a source, but not a case id within it: `record` fails a case whose folder below `recordings/<source>` holds the recording of another suite, and leaves that recording as it is. It exits 1, and leaves no recording of that case (also not the one from before), when the two runs of the original differ where the case does not allow it (see "Masks and noise"). `gate` and `replay` exit 0 when every step of every case matches the recording, 1 on a mismatch or a refused recording, and 2 on a wrong command line. Both print a summary and write it to `reports/<source>/summary.txt` next to `reports/<source>/report.json`. `gate` also exits 1 when `recordings/<source>` holds a recording of the suite whose case is gone, and `record` removes such a recording (it prints the case) and leaves the recordings of other suites alone, and removes nothing when the suite has no case at all. A command that stops at the command line (exit 2) removes the report of the source it names, so no report of an earlier run is left. `--source` and `--url` may be given once. The query of `--url` is added to the path of every `goto` as it is written. A `goto` path starts with one `/` and not with `//` or `/\`, so a case never leaves the page under test, and a case folder that is a symbolic link is refused by name. `doctor` exits 1 when Node, Playwright or Chromium is not what it needs.
+`record` exits 0 when every case was recorded. Two suites can share a source, but not a case id within it: `record` fails a case whose folder below `recordings/<source>` holds the recording of another suite, and leaves that recording as it is. It exits 1, and leaves no recording of that case (also not the one from before), when the two runs of the original differ where the case does not allow it (see "Masks and noise"), when the page does something the tape cannot hold (see "The network tape"), and when it finds a secret (see "Secrets"). `record` does not reset a backend: a case is recorded in the state the backend is in when the case starts. `gate` and `replay` exit 0 when every step of every case matches the recording, 1 on a mismatch or a refused recording, and 2 on a wrong command line. Both print a summary and write it to `reports/<source>/summary.txt` next to `reports/<source>/report.json`. `gate` also exits 1 when `recordings/<source>` holds a recording of the suite whose case is gone, and `record` removes such a recording (it prints the case) and leaves the recordings of other suites alone, and removes nothing when the suite has no case at all. A command that stops at the command line (exit 2) removes the report of the source it names, so no report of an earlier run is left. `--source` and `--url` may be given once. The query of `--url` is added to the path of every `goto` as it is written. A `goto` path starts with one `/` and not with `//` or `/\`, so a case never leaves the page under test, and a case folder that is a symbolic link is refused by name. `doctor` exits 1 when Node, Playwright or Chromium is not what it needs.
 
 ## Steps and targets
 
@@ -82,11 +85,59 @@ After each step the page settles and one observation is captured:
 - the DOM from the `html` element down, without `head`, `script`, `style` and `link`, and without the marks a framework leaves where that framework is proven for the element (see "The canonical DOM")
 - every computed CSS longhand of each element and of each `::before` and `::after` that has content, and the border box of each element (rounded to 0.01 px at capture and compared exactly: there is no tolerance, a box 0.01 px wider differs). Sizes and positions are split off, see "Sizes, positions and screenshots"
 - the events sent through `window.__aa.emit`
-- the requests, `localStorage`, the URL, the document title and the focused element, with every string that has structure compared by its parts (see "Masks and noise")
+- the requests that are no reads (see "The network tape"), `localStorage`, the URL, the document title and the focused element, with every string that has structure compared by its parts (see "Masks and noise")
 - the dialogs and windows of the page, in the order in which they happened (see "Dialogs and windows")
 - a screenshot, which is reported and never fails the gate
 
 In a recorded observation an element lists only the longhands whose value differs from its parent element. The `html` element lists all of them.
+
+## The network tape
+
+`record` stores every request that the page sends with `fetch` or XMLHttpRequest to its own origin, with the answer, in `tape.json` under the lock. `replay` and `gate` answer these requests of the port from the tape, so they need no API. Every other request (the document, scripts, styles, images, fonts, a posted form, `sendBeacon`, `EventSource`) goes to the server of the page as before.
+
+- Of a request the tape holds the step, the epoch, the method, the path, the query, the body by its parts (see "Masks and noise") and the names of the credential headers it carried. Of an answer it holds the status, the body and the headers `content-type` and `location`. No other header reaches the page, while recording or from the tape, so a page that reads another header is not supported.
+- The key of a request is its method, its origin (the origin of the page is one fixed word), its path as sent, its query with the names sorted (a repeated name keeps its order, `+` and `%20` are both a space) and its body (JSON and form fields in no key order, arrays in their order, multipart without the boundary, any other body as its exact text). No body and `{}` differ. Headers are not part of the key. A part that the case names as noise is not part of the key.
+- `POST`, `PUT`, `PATCH` and `DELETE` are mutations. Every other request is a read. The epoch starts at 0 in each case and goes up each time the answer of a mutation is handed to the page. A request has the epoch of the moment it is let go.
+- A read gets the answer of its key in the same epoch and step: the Nth read the Nth answer, and the last one repeats. If the step recorded none, the latest answer of an earlier step of the epoch, else the first of the epoch.
+- A read that the tape holds only in another epoch gets the nearest earlier answer (else the next one), and the gate fails: the tape has no answer for this state, and the case needs a step in which the original asks. A read whose key the tape does not hold is aborted and fails the gate.
+- A mutation gets the Nth answer of its key, and one more than recorded is aborted. A changed mutation gets the next unused one with the same method and path, and the report shows both. With none left it is aborted. A mutation that is changed, missing, sent once more or sent in another order fails the gate.
+- Reads are soft. They are not in the side effects. The summary lists, per step, each read that the port sent more or less often than the original, with both counts, and a different order. This never fails the gate, also not a read that the port never sends.
+- The credential headers are `authorization`, `x-xsrf-token` and `x-csrf-token`. Their values are never stored and never compared. A request of the port that has one where the recorded one had none, or the other way round, fails the gate and the report names the header.
+- Requests in flight together are answered one at a time, in the order in which they were sent. A synchronous XMLHttpRequest is answered at once.
+- The second run of `record` is answered from the tape of the first, so the backend is asked once per case. A request in the second run that does not fit that tape fails `record`, which names it and the parts that differ. A part that differs between the runs and is meant to is named as noise: `gets[n].query.<name>[i]` or `gets[n].path[i]` for a read, `requests[n].body.<key>` or `requests[n].url...` for a mutation. In the key, such an entry holds for that part of every read (or every mutation), whatever `n` is.
+- `record` refuses a case, and names the request without its query, body or headers, when the page opens a WebSocket, sends a `fetch` or XHR request to another origin, or gets an answer that sets a cookie or redirects to another origin. A request that is still open when its step ends (an event stream, a long poll) fails the step. `gate` and `replay` fail the step in which the port opens a WebSocket.
+- A redirect on the origin of the page is followed by `record`, and the final answer is stored for the request that the page sent. The page sees that answer with the URL it asked for and `redirected` false, on both sides.
+- Not covered: the order of reads and mutations among each other beyond what the epochs tell, what the HTTP cache would have answered (routing switches the cache off), preflights, and an answer body that holds the origin of the recording (a port on another origin that follows such a URL fails).
+
+The tape holds answer bodies and request bodies as they are. Nothing is redacted: `record` refuses a case instead (see "Secrets").
+
+## Secrets
+
+`record` refuses to write a recording that holds a detected secret. It checks everything it is about to write for a case (observations after the noise masks, the tape, request and answer bodies as the page sent or got them), keys as well as values. A line that it is about to print about a failed case is checked for the first five kinds and left out if it holds one.
+
+| Kind | What is detected |
+|---|---|
+| `credential` | A value the run itself saw: a cookie value, or the value of `authorization` (the part after the scheme word), `x-xsrf-token` or `x-csrf-token`. Searched as it is, JSON-escaped, URL-encoded, as base64, base64url and hex. Values shorter than 16 characters are not searched. |
+| `jwt` | `eyJ...` `.` `eyJ...` `.`, two base64url parts that start with `eyJ`, each followed by a dot. |
+| `pem` | `-----BEGIN <LABEL>-----`. |
+| `bearer-or-basic` | `Bearer` or `Basic` (without case), spaces, and a value of 8 or more characters of `A-Z a-z 0-9 . _ ~ + / = -` (final dots not counted) that holds a digit, one of `. _ ~ + / =` or a capital letter after its first character. |
+| `url-password` | `scheme://user:password@`, with both parts not empty. |
+| `named-value` | A value of 16 or more characters without white space that holds a letter and a digit, under a key whose name holds `token`, `secret`, `password`, `api_key` or `session` (without case). The key is the nearest name above the value. |
+| `secret-field` | A value in a field of type `password`, or in a field whose `autocomplete` holds `current-password`, `new-password`, `one-time-code`, `cc-number` or `cc-csc`, whether the case typed it or the page filled it. |
+
+- A `localStorage` value is a finding only when one of these finds it.
+- A case that uses `fill` or `press` on such a field is refused before anything is typed, and the message names the step and the target. An error about any other step names it with the value of `fill`, also when the target of a password step matches no element or more than one.
+- A refused case exits 1 and leaves no recording of it, also not the one from before. The message names the case, the step, the layer, the path and the kind, and no value, part of a value or hash of one. A key that is itself a finding is shown as its kind (`storage["<jwt>"]`). The layers are those of `noise` and `tape` (`[n]` is the entry of `tape.json`).
+- The query of `--url` is checked before the first line is printed, and `record` does not print it. A finding there refuses every case of the suite. A user name or a password in `--url` or `--original-url` is a usage error (exit 2).
+- A false alarm is accepted in the case, one finding per entry, with `*` for any index. The lock covers it. There is no option that accepts everything, and a case that types into a secret field cannot be accepted.
+
+```json
+"accept": [
+  { "layer": "dom", "path": "html[1]/body[1]/main[1]/p[1].attrs[\"data-session\"]", "kind": "named-value", "reason": "a made-up id of the demo" }
+]
+```
+
+- Not covered: replacing secrets by fakes, personal data, screenshots (none is written), a credential shorter than 16 characters or encoded in another way (also inside a longer base64 text), a cookie that a script sets and removes within one step. What `replay` and `gate` print and store is not searched for secrets. `--redact` keeps values out of it (see "Redacted reports").
 
 ## Sizes, positions and screenshots
 
@@ -95,22 +146,109 @@ Sizes, positions and screenshots change with the fonts and the machine while the
 - A longhand whose value the browser took from layout is split. The capture asks the browser twice: `getComputedStyle` for the laid-out value and `computedStyleMap()` for the declared one (`auto`, `50%`, `3px`). Where both give the same text, the value is stored as before. Where they differ, the declared value is stored at `.style.<longhand>` and compared anywhere, and the laid-out value is kept at `.layout.<longhand>` and compared only in the same session. A probe on the `html` element checks first that the browser gives a declared value; where it does not, and always for `::before` and `::after`, a fixed list of names is used instead (`width`, `height`, `inline-size`, `block-size`, `perspective-origin`, `transform-origin`, `top`, `right`, `bottom`, `left` and the four `inset-*`), stored as `[laid out]`.
 - A custom property whose value is a length in pixels (`--initial-height: 58px`, often measured by a script) counts as a size: stored as `[laid out]`, in the computed style and in a `style` attribute, with its value compared only in the same session.
 - The border box of each element (`.box.x`, `.y`, `.width`, `.height`) and the screenshot of each step are compared only in the same session.
-- `record` stores none of these: the recording (format `angular-anything/recording@3`) holds no box, no laid-out value and no PNG, so its lock covers only what a gate compares from it, and a recording made on one machine gates on another. `record` still runs the original twice and fails on sizes or screenshots that differ between the runs, as before; a case names such sizes as noise (`.box.width`, `.layout.width`). A recording in an older format is refused with a message that says to record it again.
-- With `--original-url` the original is run first, the way the port is run: the same case, the stored frames, a fresh browser context. Its stored layers must equal the recording in every step and it must be at rest after the stored frames. If not, the case fails with `the original at <url> does not match its recording`, the first difference, and no size, position or screenshot is compared. Then the port runs, and its sizes, positions and screenshots are compared with those of the original's run, with the case's noise masked on both. When a screenshot differs, the report folder gets both images (`03.png` and `03.original.png`). The network tape is not built yet, so `--original-url` serves the page and its API.
+- `record` stores none of these: the recording (format `angular-anything/recording@4`) holds no box, no laid-out value and no PNG, so its lock covers only what a gate compares from it, and a recording made on one machine gates on another. `record` still runs the original twice and fails on sizes or screenshots that differ between the runs, as before; a case names such sizes as noise (`.box.width`, `.layout.width`). A recording in an older format is refused with a message that says to record it again.
+- With `--original-url` the original is run first, the way the port is run: the same case, the stored frames, a fresh browser context. Its stored layers must equal the recording in every step and it must be at rest after the stored frames. If not, the case fails with `the original at <url> does not match its recording`, the first difference, and no size, position or screenshot is compared. Then the port runs, and its sizes, positions and screenshots are compared with those of the original's run, with the case's noise masked on both. When a screenshot differs, the report folder gets both images (`03.png` and `03.original.png`). Its `fetch` and XHR requests are answered from the same tape as those of the port, by the same rules, so `--original-url` only has to serve the page and its files. A finding of the tape in that run counts as a mismatch with the recording.
 - Without `--original-url` none of this is compared. The summary says so (`Sizes, positions and screenshots were not compared: no --original-url was given.`), `report.json` has `"original": null`, and the screenshots count as not compared. The stable screenshot is still taken on the port, so both sides wait the same way.
+
+A page can measure a size in a script and write it into another property (`height: var(--front-toast-height)`), which the browser then reports as a fixed length. The tool cannot tell it from a length in the CSS, so the case lists it in `measured`:
+
+```json
+"measured": [
+  { "layer": "style", "path": "html[1]/body[1]/main[1]/ol[1]/li[*].style.height" },
+  { "layer": "style", "path": "html[1]/body[1]/main[1]/ol[1]/li[*].style.block-size" },
+  { "layer": "dom", "path": "html[1]/body[1]/main[1]/ol[1]/li[*].inline.top" }
+]
+```
+
+The browser reports one size under more than one name (`height` is also `block-size`), and each name that the report shows is listed. A listed value is stored as `[laid out]` and compared only with `--original-url`, like any other size. The path ends in `.style.<property>` (a computed value) or `.inline.<property>` (a `style` attribute). A port that lacks the property still fails, and `record` fails on an entry that matches nothing. A changed list needs a new recording, because the lock covers the case.
+
+## Differences and groups
+
+Every difference in `report.json` has a `layer`, a `path`, and a `kind`: `text` (two strings), `value` (another value of the same kind, also a broken tie between masked values), `type` (another kind of value), `missing`, `extra` or `tape` (a finding of the network tape). A `text` difference also has `at`: the `offset` of the first differing character, counted in code points from 0, and up to 16 characters on each side of it, with the differing character in `⟨ ⟩` (`⟨⟩` where one text ends).
+
+Differences are grouped over all cases and steps, before the report cuts each layer to its first 10. The group of a difference is its layer, its path with every index replaced by `*`, and its kind. Its `id` is the first 8 hex digits of the SHA-256 of those three. The summary says `N distinct differences in M cases` and lists the groups by their number of differences (then by the number of cases), each with its first example: the first 20 in the summary and the console, all in `report.json` under `distinct`. The differences between the original and its recording are not in the groups.
+
+## Redacted reports
+
+`replay` and `gate` take `--redact`. The console, `summary.txt` and `report.json` then say where something differs and what shape it has, and hold no recorded value, no typed value and no text of a page:
+
+- A value is its type, for a string, a list or an object also its length and the first 8 hex digits of a SHA-256. A number, a boolean and `null` are their type only.
+- A path keeps the names of elements without a dash, the field names of the tool, the standard ARIA names, a short list of attribute names and CSS properties that are no custom properties. Every other name is `<hash>`, and so is every key below `payload`, `body`, `storage` and `query`, and the address of a tape finding.
+- A step keeps its action, its roles, indices and named keys. Names, values and paths are `<hash>`.
+- Error messages and notes on reads are `hidden, length N, hash H`, after the step number where there is one. Addresses are cut to their origin. No screenshot is written.
+
+Kept as they are: the names of suites, sources, cases, recording files and port source files, lengths, offsets, counts, frames and timings, and a message about the command line (exit 2), which repeats what was typed there. A hash of a short value can be guessed by trying values. `record` and `drift` take no `--redact`, and the recordings themselves are not redacted.
+
+## Drift
+
+`drift` takes both addresses, `--url` and `--original-url`. It is a `gate` with the original run again, and it says which side moved:
+
+- `the original changed`: the original no longer matches its recording.
+- `the port regressed`: the port no longer matches the recording.
+- Both for one case: record again, then gate the port against the new recording. The recording cannot tell whether the port followed the original.
+- `not checked`: the lock or the recording is refused, or an address cannot be reached.
+
+It exits 0 only when every case matches on both sides, and writes `reports/<source>/summary.txt` and `report.json` (`command` is `drift`, and each checked case has `drift.original` and `drift.port`). While the original of a case differs, its sizes, positions and screenshots are not compared.
+
+A GitHub Actions workflow for the Tasks fixture in this repository. For another project, replace the two build and serve lines by the ones that start its original and its port. The workflow has not been run yet. The report holds page text and, when screenshots differ, images, so upload it only where that is allowed.
+
+```yaml
+name: drift
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.18.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm fixtures:build
+      - run: |
+          node fixtures/server.ts &
+          timeout 60 bash -c 'until curl -sf http://localhost:4101 >/dev/null && curl -sf http://localhost:4104 >/dev/null; do sleep 1; done'
+          node src/cli.ts drift fixture --source react --url http://localhost:4104 --original-url http://localhost:4101
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: drift-report
+          path: reports/
+```
+
+## Recorded values in the port
+
+A port can pass by holding the recorded answers. `gate` looks for that when it is given both `--original-source <dir>` and `--port-source <dir>` (one alone is a usage error, none means no check).
+
+- A literal is a quoted string, a template string, a number, the text between two tags or a quoted attribute, also inside an inline template. It counts when it is a string of 8 or more characters or a number of 5 or more significant digits, equals a value of a step file or of the tape of a case of the suite (white space joined and trimmed, a number by its value), and the original source does not hold it.
+- 3 or more distinct ones fail the gate. 1 or 2 are noted. A value that the port may hold as it is stays with a comment `recorded-literal: reason` on its line. The reason must not be empty.
+- A port source that names `recording.json`, `tape.json`, `lock.json` or `recordings/<source>` outside a comment fails. This has no escape.
+- Read in the port: `.ts`, `.js` (also `.mts`, `.cjs` and the like), `.tsx`, `.jsx`, `.html`, `.css`, `.scss`, `.less`, `.json`, `.vue`, `.svelte` and `.svg`. Not read, on both sides: `node_modules`, `dist`, `test`, `tests`, `__tests__`, folders whose name starts with a dot, and `*.test.*` and `*.spec.*` files.
+- The original source folder has to hold everything the port may take from. A port of a library needs the library's code there too: with only the app of the sonner trial, 12 constants of the library are reported.
+- Not caught: a value that is split, joined, encoded or computed, a value in a file that is not read or outside the port folder, fewer than 3 values, a value that also appears anywhere in the original source, and a literal that follows a quote in a regular expression on its line.
 
 ## The canonical DOM
 
 The DOM is compared as the browser means it, and the browser is asked for what it knows. No CSS is implemented a second time.
 
 - Text. Adjacent text nodes are joined. Where the parent collapses whitespace (`white-space-collapse` is `collapse`), a run of space, tab and line break counts as one space. A space counts at the start or the end of a text where the browser renders it, or would on a wider line (`<span>a</span> <span>b</span>` is not `<span>a</span><span>b</span>`). It does not count at the start or the end of a block, next to a `br`, next to a block-level or out-of-flow element, after another space, or in whitespace between the items of a list, a table or a flex container. Where a line wraps is never the reason, so the same text gives the same DOM at every width. Which element is a block, an inline box or an atomic inline (an image, a button, an inline block) comes from `getComputedStyle`. Where the parent preserves whitespace (`pre`, `pre-wrap`, `break-spaces`) the text is compared as written. Under `pre-line` a line break counts as written, a run of spaces and tabs counts as one space, and spaces around a line break are removed. A no-break space is text.
-- The `style` attribute is compared as the declarations the browser parsed: each property with its value and priority, in no order. `color: red` and `color: red !important` differ, `color: red; margin: 0` and `margin: 0; color: red` do not. A declaration the browser dropped is not there.
+- The `style` attribute is compared as the declarations the browser parsed: each property with its value and priority, in no order. `color: red` and `color: red !important` differ, `color: red; margin: 0` and `margin: 0; color: red` do not. A declaration the browser dropped is not there. A colour in a property that accepts a single colour (`color`, `fill`, `border-top-color`, so also a `border` shorthand) compares as the colour the browser reads, so `red`, `#f00`, `rgb(255, 0, 0)` and `hsl(0 100% 50%)` are equal. The browser is asked through a canvas. `currentcolor`, a value with `var()`, a keyword such as `inherit` and a custom property stay as written. In `box-shadow`, `text-shadow`, `scrollbar-color` and a gradient a colour keyword and the same colour in numbers still differ. A `url()` is resolved against the base URL of the document and the origin of the page in it is replaced by `[page-origin]`, so `url(a.png)`, `url(./a.png)` and the absolute URL on the own origin are equal. A `url(#id)` stays as written, and so does text in a CSS string that only looks like a `url()`.
 - A `textarea` is compared by its value. Its text child is not part of the DOM.
 - A boolean attribute (`disabled`, `hidden`, `required`, `selected` and the others of the list) loses its value only on an element that has a boolean property of that name, so `selected="1"` on a custom element still differs from `selected="2"`. `hidden="until-found"` keeps its value.
 - Inside an AngularJS app an attribute is dropped when the injector of the page has an attribute directive of that name (built-in ones included), when it is a declared binding of a directive on that element (`.component()` and element directives included), when its name starts with `ng-attr-`, `ng-prop-` or `ng-on-`, or when AngularJS reads it without a directive: `ng-app`, `ng-strict-di`, `ng-csp`, `ng-jq`, `<name>-start` and `<name>-end` of a directive that spans elements, `ng-true-value`, `ng-false-value`, `ng-trim`, `ng-ref-read`, `ng-switch-when-separator`, `ng-transclude-slot` and `ng-animate-ref`. Any other `ng-` attribute stays. The name of a directive and a text binding (`@`) stay when the browser reads the attribute: a property of the element (without case, and `class` is `className`, `for` is `htmlFor`, `accept-charset` is `acceptCharset`, `http-equiv` is `httpEquiv`), a global HTML attribute, `aria-*`, `role` or an SVG presentation attribute on an SVG element. A text binding written with a `data-` prefix is dropped even when the browser reads it.
-- In a computed value the origin of the page inside `url()` is replaced by `[page-origin]`, so a relative `url()` compares equal on two origins. A URL to another host stays as it is, and so does a URL in an attribute. An Angular CLI build rewrites the file name of an asset in a global stylesheet (`logo.png` becomes `media/logo-<hash>.png`), and that port fails.
+- In a computed value the origin of the page inside `url()` is replaced by `[page-origin]`, also in a value that holds lengths, so a relative `url()` compares equal on two origins. The browser leaves the `url()` of a computed custom property as written, so the capture resolves it as in a `style` attribute, against the base URL of the document and not against the stylesheet that declares it. A URL to another host stays as it is, and so does a URL in an attribute. An Angular CLI build rewrites the file name of an asset in a global stylesheet (`logo.png` becomes `media/logo-<hash>.png`), and that port fails.
 - A custom property registered with `inherits: false` is compared per element: a property that the parent lists and the child does not is recorded as missing (an empty value) on the child.
-- An event payload is recorded with what it holds: a `Set` and a `Map` with their entries, `NaN`, `Infinity` and `undefined` in a list as themselves. A key with the value `undefined` equals a missing key.
+- An event payload is recorded with what it holds, read as JSON reads it (`toJSON`, own enumerable keys). A `Set` and a `Map` are recorded with their entries. `NaN`, `Infinity`, `-Infinity`, `-0`, a `BigInt`, and `undefined` and a hole in a list are told apart. A `RegExp` is its source and flags. An `Error` is its name, its message, its own enumerable fields, and `cause` and `errors` when it has them, not its stack. A getter or a `toJSON` that throws is marked where it is, and the other fields stay. A DOM node is marked with its node name and a window is marked, and neither is walked. A reference back to an object that holds it is marked as circular. An object that appears twice is written out twice, unless the payload has more than 10,000 values: then each object is written once and every later appearance is marked as repeated. A key with the value `undefined` equals a missing key.
 
 ## Choosing the selector of a component in the Angular port
 
@@ -133,7 +271,7 @@ A library port may keep the API of a component of its own (`<ngx-toaster>` that 
 - The runner does not answer a dialog. Chromium dismisses it as it did before: `alert` returns, `confirm` returns `false`, `prompt` returns `null`. A page that asks before a delete is recorded as cancelled. A step that answers a dialog is not built.
 - A dialog does not stop the clock. The call is logged when it returns, and the step settles in the frames it would have taken without it.
 - A window that `window.open` opens is real: the page gets a window object back (`typeof` is `object`, `closed` is `false`, `opener` is the page), the same for the original and for the port. Its network requests are refused, nothing in it is observed, and the runner closes it at the end of the step, so the page sees `closed` become `true` in the next step.
-- Not logged, and a port that differs there passes: the dialog that a browser shows when a page with a `beforeunload` handler is left (Chromium leaves the page without a question), and a window that a link with `target="_blank"` opens when it is clicked (the DOM layer holds its `href`, `target` and `rel`, but a port that cancels the click of the link passes). A call inside the window that `window.open` opened is not logged.
+- Not logged, and a port that differs there passes: the dialog that a browser shows when a page with a `beforeunload` handler is left (Chromium leaves the page without a question), and a window that a link with `target="_blank"` opens when it is clicked (the DOM layer holds its `href`, `target` and `rel`, but a port that cancels the click of the link passes). A call inside the window that `window.open` opened is not logged, and neither is what a page writes into that window, nor an `alert` or `confirm` in a `pagehide` handler.
 - A noise entry can name `popups[n].message`, `.default`, `.target`, `.features` and the parts of `.url`.
 
 ## Masks and noise
@@ -165,8 +303,8 @@ A library port may keep the API of a component of its own (`<ngx-toaster>` that 
 Strings with structure are compared by their parts, and a difference or a mask names the part:
 
 - A `localStorage` value that parses as JSON to an object or a list is compared by its parts: spaces and escapes do not count, the order of the keys does count (`storage.settings.$order`), and a number counts as written (`1.1` and `1.10` differ, so do `1e2` and `100`). Any other value is a string: `7`, `"seven"`, `null` and text that is not JSON. A value that parses on one side and not on the other is a difference at the key. Keys of integer form are ordered by the JavaScript engine, so the order of those among themselves is not told.
-- The URL of a request or of a GET is `path` (segments as sent), `query` and `origin` (only when it is not the origin of the page). Query parameters are decoded, `+` and `%20` are both a space, the order of parameters with different names does not count, and repeated names keep their order (`?tag=a&tag=b` differs from `?tag=b&tag=a`). The URL of the page has its path segments decoded, its query compared like that of a request, and its fragment as sent. A string is a URL only at those places: a stored value or a field that looks like a URL is a string, and an attribute that holds a URL is compared as written.
-- A body is a form (`application/x-www-form-urlencoded`) compared like a query, a multipart body, or JSON (an object or a list, parsed, in no key order). A multipart body is compared by its parts: the name, the file name, the type, the size and the content of a file (as a SHA-256), the text of a field. The boundary is never compared, and neither is the order of parts with different names. Parts with one name keep their order. Anything else is a string.
+- The URL of a request or of a read is `path` (segments as sent), `query` and `origin` (only when it is not the origin of the page). Query parameters are decoded, `+` and `%20` are both a space, the order of parameters with different names does not count, and repeated names keep their order (`?tag=a&tag=b` differs from `?tag=b&tag=a`). The URL of the page has its path segments decoded, its query compared like that of a request, and its fragment as sent. A string is a URL only at those places: a stored value or a field that looks like a URL is a string, and an attribute that holds a URL is compared as written.
+- A body is a form (`application/x-www-form-urlencoded`) compared like a query, a multipart body, or JSON (an object or a list, parsed, in no key order). A multipart body is compared by its parts: the name, the file name, the type, the size and the content of a file (as a SHA-256), the text of a field. The boundary is never compared, and neither is the order of parts with different names. Parts with one name keep their order. Anything else is a string. A name, a file name, a value or a whole body whose bytes are not UTF-8 is `base64:` and its bytes, and so is such a percent sequence in a query.
 
 A port that stores `7` where the original stores its random token passes: a stored value that is no JSON object or list is a string, and so is the token, so their kinds cannot tell them apart.
 

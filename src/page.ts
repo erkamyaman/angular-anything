@@ -25,6 +25,7 @@ export type PageCapture = {
   aria: Record<string, Record<string, string>>;
   focus: string | null;
   unread: Unread;
+  secretFields: string[];
   storage: Record<string, string>;
   href: string;
   title: string;
@@ -48,6 +49,7 @@ type Instrumented = {
   __aaMutations: number;
   __aaRested?: number;
   __aaShadows: WeakMap<Element, ShadowRoot>;
+  __aaSecretField?(el: Element): boolean;
   __aaHeld: WeakSet<SVGSVGElement>;
   __aaSeen: WeakSet<Animation>;
   __aaPending?: Map<unknown, { due: number; delay: number }>;
@@ -58,51 +60,121 @@ type Instrumented = {
 
 export function initPage(): void {
   const page = window as unknown as Instrumented & { __aa: unknown };
+  const expansionLimit = 10_000;
+  const tooLarge = Symbol();
+  const failed = Symbol();
+  const nodeType = Object.getOwnPropertyDescriptor(Node.prototype, 'nodeType')!.get!;
+  const nodeName = Object.getOwnPropertyDescriptor(Node.prototype, 'nodeName')!.get!;
+  const marker = (kind: string, fields: string[] = []) => `{${[`"$aa":${JSON.stringify(kind)}`, ...fields].join(',')}}`;
+  const read = (get: () => unknown): unknown => {
+    try {
+      return get();
+    } catch {
+      return failed;
+    }
+  };
+
+  const encode = (payload: unknown, walked: Set<unknown> | null): string | undefined => {
+    const ancestors: unknown[] = [];
+    let count = 0;
+    const host = (value: object): string | undefined => {
+      if (read(() => nodeType.call(value)) !== failed) return marker('node', [`"name":${JSON.stringify(nodeName.call(value))}`]);
+      if (read(() => (value as { window?: unknown }).window === value) === true) return marker('window');
+      return undefined;
+    };
+    const walk = (source: unknown, key: string, hole?: boolean): string | undefined => {
+      if (source === failed) return marker('throws');
+      if (++count > expansionLimit && !walked) throw tooLarge;
+      let value = source;
+      if ((typeof value === 'object' && value !== null) || typeof value === 'bigint') {
+        if (typeof value === 'object') {
+          const marked = host(value);
+          if (marked) return marked;
+          if (ancestors.includes(value)) return marker('circular');
+        }
+        const toJson = read(() => (source as { toJSON?: unknown }).toJSON);
+        if (toJson === failed) return marker('throws');
+        if (typeof toJson === 'function') value = read(() => toJson.call(source, key));
+        if (value === failed) return marker('throws');
+      }
+      if (value instanceof Number || value instanceof String || value instanceof Boolean || value instanceof BigInt) {
+        const boxed = value;
+        value = read(() => boxed.valueOf());
+        if (value === failed) return marker('throws');
+      }
+      if (value === undefined && hole !== undefined) return marker(hole ? 'hole' : 'undefined');
+      if (value === undefined) return undefined;
+      if (typeof value === 'bigint') return marker('bigint', [`"value":"${value}"`]);
+      if (typeof value === 'number' && !Number.isFinite(value)) return marker(String(value));
+      if (Object.is(value, -0)) return marker('-0');
+      if (typeof value !== 'object' || value === null) return JSON.stringify(value);
+      const object = value as Record<string, unknown>;
+      const marked = host(object);
+      if (marked) return marked;
+      if (ancestors.includes(object)) return marker('circular');
+      if (walked) {
+        if (walked.has(source) || walked.has(object)) return marker('repeated');
+        walked.add(source).add(object);
+      }
+      const depth = ancestors.push(source, object) - 2;
+      const field = (name: string, get: () => unknown, label = name): string | undefined => {
+        const written = walk(read(get), name);
+        return written === undefined ? undefined : `${JSON.stringify(label)}:${written}`;
+      };
+      const list = (items: unknown): string => {
+        if (items === failed) return marker('throws');
+        const array = items as unknown[];
+        const written = Array.from(
+          { length: array.length },
+          (_, at) => walk(read(() => array[at]), String(at), !(at in array)) ?? 'null',
+        );
+        return `[${written.join(',')}]`;
+      };
+      const present = (fields: (string | undefined)[]) => fields.filter((each) => each !== undefined);
+      let written: string;
+      if (Array.isArray(object)) {
+        written = list(object);
+      } else if (object instanceof Set) {
+        written = marker('Set', [`"values":${list(read(() => [...object]))}`]);
+      } else if (object instanceof Map) {
+        written = marker('Map', [`"entries":${list(read(() => [...object]))}`]);
+      } else if (object instanceof RegExp) {
+        written = marker('RegExp', present([field('source', () => object.source), field('flags', () => object.flags)]));
+      } else {
+        const keys = read(() => Object.keys(object));
+        if (keys === failed) {
+          written = marker('throws');
+        } else if (object instanceof Error) {
+          const names = new Set(['name', 'message', ...(keys as string[])]);
+          for (const name of ['cause', 'errors']) if (Object.hasOwn(object, name)) names.add(name);
+          written = marker('Error', present([...names].map((name) => field(name, () => object[name]))));
+        } else {
+          written = `{${present((keys as string[]).map((name) => field(name, () => object[name]))).join(',')}}`;
+        }
+      }
+      ancestors.length = depth;
+      return written;
+    };
+    return walk(payload, 'payload');
+  };
+
   page.__aa = {
     emit(name: string, payload: unknown) {
+      const head = JSON.stringify({ name }).slice(1, -1);
+      const event = (body: string | undefined) =>
+        `{${[head, body === undefined ? '' : `"payload":${body}`].filter(Boolean).join(',')}}`;
       let json: string;
       try {
-        const holders: unknown[] = [];
-        const originals: unknown[] = [];
-        json = JSON.stringify({ name, payload: payload ?? null }, function (this: unknown, key, value: unknown) {
-          while (holders.length > 0 && holders[holders.length - 1] !== this) {
-            holders.pop();
-            originals.pop();
-          }
-          const isObject = typeof value === 'object' && value !== null;
-          let result: unknown = value;
-          if (isObject && originals.includes(value)) {
-            result = { $aa: 'circular' };
-            holders.push(result);
-            originals.push(result);
-            return result;
-          }
-          if (value === undefined) {
-            if (!Array.isArray(this)) return undefined;
-            result = key in this ? { $aa: 'undefined' } : { $aa: 'hole' };
-          } else if (typeof value === 'bigint') {
-            result = { $aa: 'bigint', value: String(value) };
-          } else if (typeof value === 'number' && !Number.isFinite(value)) {
-            result = { $aa: String(value) };
-          } else if (Object.is(value, -0)) {
-            result = { $aa: '-0' };
-          } else if (value instanceof Set) {
-            result = { $aa: 'Set', values: [...value] };
-          } else if (value instanceof Map) {
-            result = { $aa: 'Map', entries: [...value] };
-          } else if (value instanceof Error) {
-            result = { $aa: 'Error', name: value.name, message: value.message };
-          } else if (value instanceof RegExp) {
-            result = { $aa: 'RegExp', source: value.source, flags: value.flags };
-          }
-          if (typeof result === 'object' && result !== null) {
-            holders.push(result);
-            originals.push(isObject ? value : result);
-          }
-          return result;
-        });
+        let body: string | undefined;
+        try {
+          body = encode(payload ?? null, null);
+        } catch (error) {
+          if (error !== tooLarge) throw error;
+          body = encode(payload ?? null, new Set());
+        }
+        json = event(body);
       } catch {
-        json = JSON.stringify({ name, payload: '[unserializable]' });
+        json = event('"[unserializable]"');
       }
       page.__aaEmit(json);
     },
@@ -113,6 +185,15 @@ export function initPage(): void {
   }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
   const requestFrame = window.requestAnimationFrame.bind(window);
   page.__aaFrame = () => new Promise((resolve) => requestFrame(() => resolve()));
+
+  const secretAutocomplete = ['current-password', 'new-password', 'one-time-code', 'cc-number', 'cc-csc'];
+  page.__aaSecretField = (el) =>
+    ['input', 'textarea', 'select'].includes(el.localName) &&
+    ((el as HTMLInputElement).type === 'password' ||
+      (el.getAttribute('autocomplete') ?? '')
+        .toLowerCase()
+        .split(/\s+/)
+        .some((token) => secretAutocomplete.includes(token)));
 
   page.__aaHeld = new WeakSet();
   page.__aaSeen = new WeakSet();
@@ -290,6 +371,20 @@ export function probePage(): string {
   return JSON.stringify([page.__aaMutations, location.href, [scrollX, scrollY], boxes, scrolled, storage]);
 }
 
+export function typesIntoSecretField(el: Element, pressed: boolean): boolean {
+  const page = window as unknown as Instrumented;
+  const field = (el as HTMLLabelElement).control ?? el;
+  if (page.__aaSecretField!(field)) return true;
+  if (!pressed || field.matches('input, textarea, select, button, a[href], [tabindex], [contenteditable]')) return false;
+  let focused = document.activeElement;
+  while (focused) {
+    const inner: Element | null | undefined = (focused.shadowRoot ?? page.__aaShadows.get(focused))?.activeElement;
+    if (!inner) return page.__aaSecretField!(focused);
+    focused = inner;
+  }
+  return false;
+}
+
 export function adoptPage(...roots: ShadowRoot[]): void {
   for (const root of roots) (window as unknown as Instrumented).__aaShadows.set(root.host, root);
 }
@@ -398,6 +493,7 @@ export function capturePage(): PageCapture {
   const style: Style = {};
   const aria: PageCapture['aria'] = {};
   const unread: Unread = [];
+  const secretFields: string[] = [];
   const paths = new Map<Element, string>();
   const round = (value: number) => Math.round(value * 100) / 100;
 
@@ -406,12 +502,22 @@ export function capturePage(): PageCapture {
     'g',
   );
 
-  const inlineUrls = (value: string) =>
-    value.replace(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s"']*))\s*\)/g, (whole, double?: string, single?: string, bare?: string) => {
-      const written = double ?? single ?? bare ?? '';
+  const withoutOrigin = (value: string) => value.replace(originPattern, 'url($1[page-origin]');
+  const cssStringOrUrl =
+    /"[^"\\]*(?:\\[\s\S][^"\\]*)*"|'[^'\\]*(?:\\[\s\S][^'\\]*)*'|(?<![-\w\\])url\(\s*(?:"([^"\\]*(?:\\[\s\S][^"\\]*)*)"|'([^'\\]*(?:\\[\s\S][^'\\]*)*)'|([^)\s"'\\]*(?:(?:\\[0-9a-fA-F]{1,6}\s|\\[\s\S])[^)\s"'\\]*)*))\s*\)/gi;
+  const unescapeCss = (text: string) =>
+    text.replace(/\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\n\r\f])?|(\r\n|[\n\r\f])|([\s\S]))/g, (_, hex?: string, newline?: string, char?: string) => {
+      if (hex === undefined) return newline === undefined ? char! : '';
+      return String.fromCodePoint(Math.min(parseInt(hex, 16), 0x10ffff));
+    });
+
+  const resolveUrls = (value: string) =>
+    value.replace(cssStringOrUrl, (whole, double?: string, single?: string, bare?: string) => {
+      const written = unescapeCss(double ?? single ?? bare ?? '');
       if (written === '' || written.startsWith('#')) return whole;
       try {
-        return `url("${new URL(written, document.baseURI).href}")`.replace(originPattern, 'url($1[page-origin]');
+        const href = new URL(written, document.baseURI).href.replace(/["\\]/g, '\\$&');
+        return withoutOrigin(`url("${href}")`);
       } catch {
         return whole;
       }
@@ -524,7 +630,8 @@ export function capturePage(): PageCapture {
     const layout: Record<string, string> = {};
     const names = [...[...computed].filter((property) => !property.startsWith('--')), ...[...computed].filter((property) => property.startsWith('--')).sort()];
     for (const property of names) {
-      const value = computed.getPropertyValue(property).replace(originPattern, 'url($1[page-origin]');
+      const read = computed.getPropertyValue(property);
+      const value = property.startsWith('--') ? resolveUrls(read) : withoutOrigin(read);
       if (property.startsWith('--')) {
         if (isLength(value)) {
           values[property] = laidOut;
@@ -535,7 +642,8 @@ export function capturePage(): PageCapture {
       } else if (!value.includes('px') && property !== 'transform') {
         values[property] = value;
       } else if (declared) {
-        const written = declared.get(property)?.toString();
+        const typed = declared.get(property)?.toString();
+        const written = typed === undefined ? undefined : withoutOrigin(typed);
         if (written === undefined || written === value || (isLength(written) && isLength(value))) {
           values[property] = value;
         } else {
@@ -705,7 +813,7 @@ export function capturePage(): PageCapture {
     if (declared) {
       for (const property of declared) {
         const priority = declared.getPropertyPriority(property);
-        const value = colourOf(property, inlineUrls(declared.getPropertyValue(property)));
+        const value = colourOf(property, resolveUrls(declared.getPropertyValue(property)));
         if (property.startsWith('--') && isLength(value)) {
           inlineLayout[property] = value + (priority ? ` !${priority}` : '');
           inline[property] = laidOut + (priority ? ` !${priority}` : '');
@@ -732,6 +840,8 @@ export function capturePage(): PageCapture {
       delete attrs.selected;
       props.selected = (el as HTMLOptionElement).selected;
     }
+
+    if (typeof props.value === 'string' && props.value !== '' && page.__aaSecretField?.(el)) secretFields.push(path);
 
     const accessibility: Record<string, string> = {};
     for (const [name, value] of Object.entries(attrs)) {
@@ -796,6 +906,7 @@ export function capturePage(): PageCapture {
     aria,
     focus: (document.activeElement && paths.get(document.activeElement)) ?? null,
     unread,
+    secretFields,
     storage: localStorageItems(),
     href: location.href,
     title: document.title,

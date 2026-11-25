@@ -90,6 +90,9 @@ export function formatPath(tokens: Token[]): string {
   return text;
 }
 
+export const collapseIndices = (path: string): string =>
+  path.replace(/("(?:[^"\\]|\\.)*")|\[\d+\]/g, (_, quoted?: string) => quoted ?? '[*]');
+
 export type Matcher = { canonical: string; matches(path: string, relaxed?: boolean): boolean };
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');

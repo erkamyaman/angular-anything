@@ -145,7 +145,7 @@ const entriesOf = (entries: Entry[], layer: Layer) => entries.filter((entry) => 
 
 export function normalize(observation: Observation, noise: Entry[]): Observation {
   const { gets } = observation.effects;
-  if (gets.length < 2) return observation;
+  if (!gets || gets.length < 2) return observation;
   const relaxed = entriesOf(noise, 'effects');
   const order = (get: UrlParts): string => {
     const probe = { effects: { gets: [structuredClone(get)] } };

@@ -1,5 +1,5 @@
 {
-  "format": "angular-anything/recording@3",
+  "format": "angular-anything/recording@4",
   "suite": "sonner",
   "case": "success-error",
   "source": "sonner-react",

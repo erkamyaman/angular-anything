@@ -1,4 +1,4 @@
-import type { Browser, CDPSession, Locator, Page, Request, Response } from 'playwright';
+import type { Browser, CDPSession, Locator, Page, Request, Response, Route } from 'playwright';
 import { describeStep, describeTarget, FRAME_MS } from './case.ts';
 import type { Case, Step, Target } from './case.ts';
 import { LAYERS, LAYER_NAMES } from './compare.ts';
@@ -14,10 +14,16 @@ import {
   probePage,
   restPage,
   trackTimers,
+  typesIntoSecretField,
 } from './page.ts';
 import type { Due, Unread } from './page.ts';
 import { bodyParts, storageValue, urlParts } from './parts.ts';
 import type { UrlParts } from './parts.ts';
+import { compile } from './noise.ts';
+import { addCredential, addRequest, addSetCookie } from './secrets.ts';
+import type { Seen } from './secrets.ts';
+import { ANSWER_HEADERS, CREDENTIAL_HEADERS, isMutation, player } from './tape.ts';
+import type { Answer, Asked, Finding, Taken, TapeEntry } from './tape.ts';
 
 const CLOCK_START = '2026-01-01T00:00:00Z';
 export const QUIET_FRAMES = 4;
@@ -25,6 +31,8 @@ export const LOOKAHEAD_MS = 500;
 const SETTLE_FRAMES = 300;
 const REST_ROUNDS = 100;
 const ANSWER_ROUNDS = 100;
+const REDIRECTS = [301, 302, 303, 307, 308];
+const MAX_REDIRECTS = 20;
 export const STILL_MS = 5000;
 const STILL_PROBES = 4;
 const QUIET_MS = 50;
@@ -35,9 +43,11 @@ const WINDOW_WAIT_MS = 200;
 const ACTION_TIMEOUT_MS = 5000;
 const SETTLE_TIMEOUT_MS = 30_000;
 
-export type StepRun = { observation: Observation; unread: Unread; screenshot: Buffer; settleMs: number; captures: number; frames: number };
+export type StepRun = { observation: Observation; unread: Unread; secretFields: string[]; screenshot: Buffer; settleMs: number; captures: number; frames: number };
 
-export type CaseRun = { steps: StepRun[]; error?: string };
+export type CaseRun = { steps: StepRun[]; error?: string; tape: TapeEntry[]; findings: Finding[]; refusals: string[]; taken: Taken[] };
+
+export type Replayed = { entries: TapeEntry[]; second?: boolean };
 
 export type Log = {
   events: Observation['events'];
@@ -60,7 +70,7 @@ export type Log = {
   window?: { deadline: number; members: Set<Request> };
 };
 
-type Observed = { observation: Observation; unread: Unread; seen: { events: number; requests: number; popups: number } };
+type Observed = { observation: Observation; unread: Unread; secretFields?: string[]; seen: { events: number; requests: number; popups: number } };
 
 export type FramePage = {
   begin(): Promise<void>;
@@ -86,6 +96,20 @@ export type Run = { moving: number; answers: number; stillMs: number; progress: 
 export const newRun = (stillMs = STILL_MS): Run => ({ moving: 0, answers: 0, stillMs, progress: Date.now() });
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const taped = (request: Request) => ['fetch', 'xhr'].includes(request.resourceType()) && /^https?:/.test(request.url());
+
+const asked = (request: Request, base: URL): Asked => ({
+  method: request.method(),
+  url: urlParts(request.url(), base, 'request'),
+  body: bodyParts(request.postDataBuffer(), request.headers()['content-type'] ?? ''),
+  credentials: CREDENTIAL_HEADERS.filter((name) => request.headers()[name] !== undefined),
+});
+
+const encoded = (body: Buffer): Pick<Answer, 'body' | 'base64'> => {
+  const text = body.toString('utf8');
+  return Buffer.from(text, 'utf8').equals(body) ? { body: text } : { body: body.toString('base64'), base64: true };
+};
 
 const local = (href: string, base: URL): string => {
   const url = new URL(href);
@@ -137,8 +161,9 @@ async function observe(page: Page, base: URL, log: Log): Promise<Observed> {
   const pageUrl = new URL(captured.href);
   for (const [key, value] of base.searchParams) pageUrl.searchParams.delete(key, value);
   const reads = new Map<string, UrlParts>();
+  const read = (request: Request) => taped(request) && !isMutation(request.method());
   for (const request of requests) {
-    if (request.method() !== 'GET' || !['fetch', 'xhr'].includes(request.resourceType())) continue;
+    if (!read(request)) continue;
     const parts = urlParts(request.url(), base, 'request');
     reads.set(JSON.stringify(parts), parts);
   }
@@ -149,7 +174,7 @@ async function observe(page: Page, base: URL, log: Log): Promise<Observed> {
     events,
     effects: {
       requests: requests
-        .filter((request) => request.method() !== 'GET')
+        .filter((request) => request.method() !== 'GET' && !read(request))
         .map((request) => ({
           method: request.method(),
           url: urlParts(request.url(), base, 'request'),
@@ -163,7 +188,8 @@ async function observe(page: Page, base: URL, log: Log): Promise<Observed> {
       popups: popups.map((popup) => popupOf(popup, base)),
     },
   };
-  return { observation, unread: captured.unread, seen: { events: events.length, requests: requests.length, popups: popups.length } };
+  const seen = { events: events.length, requests: requests.length, popups: popups.length };
+  return { observation, unread: captured.unread, secretFields: captured.secretFields, seen };
 }
 
 export async function rest(page: FramePage, requests: Requests, run: Run = newRun()): Promise<string[]> {
@@ -410,7 +436,10 @@ export async function closeWindows(log: Log, arriveMs = WINDOW_WAIT_MS, closeMs 
   await within(Promise.all(windows.map((window) => window.close().catch(() => {}))), () => `waited ${closeMs} ms to close a window`, closeMs);
 }
 
-const named = (request: Request, base: URL) => `${request.method()} ${local(request.url(), base)}`;
+const named = (request: Request, base: URL) => {
+  const url = new URL(request.url());
+  return `${request.method()} ${url.origin === base.origin ? '' : url.origin}${url.pathname}`;
+};
 
 export async function idle(log: Log, base: URL, waitMs = WAIT_TIMEOUT_MS): Promise<void> {
   if (!log.window || ![...log.window.members].some((request) => log.inFlight.has(request))) {
@@ -537,7 +566,7 @@ function answered(response: Response | null): void {
   if (response && response.status() >= 400) throw new Error(`the page answered ${`${response.status()} ${response.statusText()}`.trim()}`);
 }
 
-async function act(page: Page, step: Step, base: URL): Promise<void> {
+async function act(page: Page, step: Step, base: URL, guarded: boolean): Promise<string | undefined> {
   switch (step.action) {
     case 'goto':
       answered(await page.goto(gotoUrl(step.path, base)));
@@ -549,6 +578,11 @@ async function act(page: Page, step: Step, base: URL): Promise<void> {
       return;
   }
   const target = await locate(page, step.target, 'the target');
+  if (guarded && (step.action === 'fill' || step.action === 'press')) {
+    if (await target.evaluate(typesIntoSecretField, step.action === 'press')) {
+      return `the case types into a password, one-time code or card field: ${describeTarget(step.target)}`;
+    }
+  }
   switch (step.action) {
     case 'click':
       await target.click();
@@ -581,6 +615,8 @@ export async function runCase(
   limit = SETTLE_TIMEOUT_MS,
   stored?: number[],
   stillMs = STILL_MS,
+  replayed?: Replayed,
+  secrets?: Seen,
 ): Promise<CaseRun> {
   const context = await browser.newContext({
     viewport: testCase.viewport,
@@ -610,6 +646,79 @@ export async function runCase(
     observations: 0,
   };
   const steps: StepRun[] = [];
+  const play = replayed && player(replayed.entries, compile(testCase.noise ?? []), replayed.second);
+  const slots: (Omit<TapeEntry, 'answer'> & { answer?: TapeEntry['answer'] })[] = [];
+  const refusals: string[] = [];
+  const sockets: Finding[] = [];
+  const sentIn = new WeakMap<Request, number>();
+  let epoch = 0;
+  let closed = false;
+  const heard: Promise<void>[] = [];
+  const jar = async () => {
+    if (!secrets) return;
+    for (const { value } of await context.cookies()) addCredential(secrets, 'cookie', value);
+  };
+  const ran = (error?: string): CaseRun => ({
+    steps,
+    ...(error === undefined ? {} : { error }),
+    tape: slots.filter((slot): slot is TapeEntry => slot.answer !== undefined),
+    findings: [...(play?.findings ?? []), ...sockets],
+    refusals,
+    taken: play?.taken ?? [],
+  });
+  const ask = async (route: Route, request: Request, wanted: Asked, step: number): Promise<Answer | null> => {
+    const refuse = (why: string) => {
+      refusals.push(`step ${step}, ${why}: ${named(request, base)}`);
+      return null;
+    };
+    if (wanted.url.origin !== undefined) return refuse('the page sends a request to another origin');
+    const slot: (typeof slots)[number] = { step, epoch, ...wanted };
+    slots.push(slot);
+    const sent = request.postDataBuffer();
+    try {
+      let response = await route.fetch({ maxRedirects: 0, timeout: 0 });
+      let target = new URL(request.url());
+      let method = request.method();
+      for (let hop = 0; ; hop++) {
+        const cookies = response.headersArray().filter(({ name }) => name.toLowerCase() === 'set-cookie');
+        if (cookies.length > 0) refuse('the answer sets a cookie');
+        if (secrets) for (const { value } of cookies) addSetCookie(secrets, value);
+        const status = response.status();
+        const location = response.headers().location;
+        if (!REDIRECTS.includes(status) || location === undefined || hop === MAX_REDIRECTS) break;
+        target = new URL(location, target);
+        if (target.origin !== base.origin) return refuse('the answer redirects to another origin');
+        if (status === 303 ? method !== 'HEAD' : status < 303 && method === 'POST') method = 'GET';
+        const dropped = method === 'GET' ? { postData: Buffer.alloc(0) } : {};
+        response = await route.fetch({ maxRedirects: 0, timeout: 0, url: target.href, method, ...dropped });
+      }
+      const body = await response.body();
+      const headers = Object.fromEntries(
+        ANSWER_HEADERS.flatMap((name) => (response.headers()[name] === undefined ? [] : [[name, response.headers()[name]]])),
+      );
+      slot.answer = { status: response.status(), headers, ...encoded(body) };
+      if (sent) secrets?.bodies.set(slot, sent);
+      return slot.answer;
+    } catch {
+      if (!closed) slot.answer = null;
+      return null;
+    }
+  };
+  const answer = async (route: Route, request: Request) => {
+    const step = sentIn.get(request) ?? steps.length + 1;
+    const wanted = asked(request, base);
+    const found = play ? play.take(wanted, step, epoch)?.answer : await ask(route, request, wanted, step);
+    if (!found) {
+      await route.abort('failed').catch(() => {});
+      return;
+    }
+    const mutated = isMutation(wanted.method) ? 1 : 0;
+    epoch += mutated;
+    const { status, headers, body, base64 } = found;
+    await route.fulfill({ status, headers, body: Buffer.from(body, base64 ? 'base64' : 'utf8') }).catch(() => {
+      epoch -= mutated;
+    });
+  };
   try {
     context.setDefaultTimeout(ACTION_TIMEOUT_MS);
     let main: Page | undefined;
@@ -639,8 +748,23 @@ export async function runCase(
         log.synchronous.has(`${request.method()} ${request.url()}`) ||
         (log.navigation !== undefined && !['fetch', 'xhr'].includes(request.resourceType()));
       if (!passes) await new Promise<void>((resolve) => log.held.set(request, resolve));
-      await route.continue().catch(() => {});
+      if (closed) return;
+      if (taped(request)) await answer(route, request);
+      else await route.continue().catch(() => {});
     });
+    if (secrets) {
+      context.on('request', (request) => addRequest(secrets, request.headers()));
+      context.on('response', (response) => {
+        heard.push(
+          response.headerValue('set-cookie').then(
+            (header) => {
+              if (header !== null) addSetCookie(secrets, header);
+            },
+            () => {},
+          ),
+        );
+      });
+    }
     const page = await context.newPage();
     main = page;
     context.on('page', (opened) => {
@@ -649,7 +773,15 @@ export async function runCase(
     });
     const session = await context.newCDPSession(page);
     await session.send('Page.setFontFamilies', { fontFamilies: { standard: 'Times New Roman' } });
+    page.on('websocket', (socket) => {
+      const url = new URL(socket.url());
+      const name = `WebSocket ${url.protocol}//${url.host}${url.pathname}`;
+      const step = steps.length + 1;
+      if (play) sockets.push({ step, request: name, expected: 'no WebSocket', actual: 'the page opened a WebSocket', differs: [] });
+      else refusals.push(`step ${step}, the page opens a WebSocket: ${name.slice('WebSocket '.length)}`);
+    });
     page.on('request', (request) => {
+      sentIn.set(request, steps.length + 1);
       log.requests.push(request);
       log.lastRequest = named(request, base);
       log.inFlight.add(request);
@@ -742,7 +874,11 @@ export async function runCase(
         const run = newRun(stillMs);
         const observed = log.observations;
         await frames.begin();
-        await act(page, step, base);
+        const forbidden = await act(page, step, base, secrets !== undefined);
+        if (forbidden !== undefined) {
+          refusals.push(`step ${index + 1}, ${forbidden}`);
+          return ran();
+        }
         const started = performance.now();
         run.progress = Date.now();
         const guard: Guard = (work) => unmoved(work, late, limit, run);
@@ -762,9 +898,11 @@ export async function runCase(
         log.popups.splice(0, shot.looked.seen.popups);
         log.requests.splice(0, shot.looked.seen.requests);
         await closeWindows(log);
+        await jar();
         steps.push({
           observation: shot.looked.observation,
           unread: shot.looked.unread,
+          secretFields: shot.looked.secretFields ?? [],
           screenshot: shot.screenshot,
           settleMs,
           captures: log.observations - observed,
@@ -776,11 +914,14 @@ export async function runCase(
           log.navigation && !message.includes('navigation')
             ? `, the navigation to ${local(log.navigation.url(), base)} had not loaded`
             : '';
-        return { steps, error: `step ${steps.length + 1} (${describeStep(step)}): ${message}${leaving}` };
+        return ran(`step ${steps.length + 1} (${describeStep(step)}): ${message}${leaving}`);
       }
     }
-    return { steps };
+    return ran();
   } finally {
+    await within(Promise.all(heard), () => 'the cookies of the answers', WAIT_TIMEOUT_MS).catch(() => {});
+    await jar().catch(() => {});
+    closed = true;
     for (const release of log.held.values()) release();
     await context.close();
   }

@@ -294,6 +294,7 @@ FAIL  details
         style and geometry: 2 differences, the first at ${count}.style.margin-left
           expected: "0px"
           actual:   "3px"
+          at char 0: expected "⟨0⟩px", actual "⟨3⟩px"
         side effects: 2 differences, the first at storage.tasks
           expected: "[{\\"id\\":1}]"
           actual:   nothing
@@ -441,7 +442,7 @@ test('the last child of a node, the last event and the last request count', () =
     (port.accessibility.tree[0] as { children: unknown[] }).children.pop();
     port.events.pop();
     port.effects.requests.pop();
-    port.effects.gets.pop();
+    port.effects.gets!.pop();
   });
   assert.deepEqual(Object.keys(found).sort(), ['accessibility', 'dom', 'effects', 'events']);
   assert.equal(found.dom?.[0].path, `${count}`);

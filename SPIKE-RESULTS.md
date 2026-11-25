@@ -333,7 +333,7 @@ The gate did not check these, and a port that differs in them passes. Where a po
 - States that exist only between an action and the settled observation. `aria-busy` on Load suggestions is in none of the 87 recorded observations, and a port that never sets it passes. A port whose count shows "99 tasks left" for one frame after a toggle passes, and so does one that paints the suggestions in reverse order for one frame. A port that never disables the button is caught, but only because the disabled button loses focus in the originals.
 - Effects after the last settle of a case. A port that emits `taskToggled` a second time 1.5 s after a toggle passes.
 - A port that behaves differently when the verifier is present. One that sends its POST only when `window.__aa` is defined passes.
-- Dialogs and new windows. A port that calls `alert` on every add passes, and so does one that calls `window.open`. Playwright dismisses a dialog that nobody listens for, so a flow behind `confirm()` would be recorded as cancelled. That last point was not tried.
+- Dialogs and new windows. This was measured before step 4. Since then `alert`, `confirm`, `prompt`, `print` and `window.open` are side effects and a port that adds one fails. What is still not logged is in the list below. A flow behind `confirm()` is recorded as cancelled.
 - Exact timer lengths, and anything else that depends on real time. A toast of 1200 to 3200 ms passes for 2000 ms, see "Spike defaults, measured".
 - Work the page starts later than about 100 ms after an action (a debounce, a delayed render). It lands in a later step or is missed.
 - The order between events, requests, storage writes and focus changes inside one step. Each is its own list. The three originals already differ in it.
@@ -349,11 +349,63 @@ The gate did not check these, and a port that differs in them passes. Where a po
 - A port that uses Angular's form classes (`ng-untouched`, `ng-pristine`, `ng-valid`). They are no longer dropped on the port side, so such a port would fail in the DOM layer. That was not tried, the port of this fixture has no forms package. The rule needs a proof on the Angular side once a port uses forms.
 - Geometry shifts of up to 0.5 px that no longhand shows.
 - Code in the verifier that no fixture and no case of the suite reaches: the properties of radio buttons, `select`, `textarea` and `option`, the `indeterminate` state, a payload that cannot be serialized, request bodies that are not JSON, URLs on another origin, `hidden="until-found"`, and the object form of `module.directive`. The `press` step is used by the end-to-end test only.
-- Behaviors of the Tasks fixture that no case of the suite uses: the Enter key (a port whose Enter key is broken passes), trimming, ids after a delete, a second add while the toast shows, a toggle under a filter, a click on a label.
+- Behaviors of the Tasks fixture that no case of the suite uses: a click on a label. The Enter key, trimming, ids after a delete, a second add while the toast shows and a toggle under a filter have cases since step 4. The port `id-by-length` still passes the 19 cases as written.
 - Other viewports, other browsers, other operating systems. Recording on one machine and gating on another. The research says sizes and screenshots differ between macOS and Linux. That was not tried here, and with sizes compared as exact strings it matters more now.
 - The lock is evidence, not protection. Someone who edits a file and recomputes every hash, the root included, is not caught. Removing a case together with its recording is not caught. A screenshot that still differs between the two recording runs is stored and hashed, so such a case would get a new root hash with every recording. That did not happen in this pass.
 - Recordings hold input values and `localStorage` contents as they are. Nothing is redacted.
 - Everything SPIKE.md lists under "Not in this milestone".
+
+### Limits known after steps 2 to 5b and their reviews
+
+A port that differs passes:
+
+- The `Content-Type` of a request is not compared. The tape (5a) keeps headers outside the key and compares the presence of the three credential headers only.
+- Text `base64:...` in a query, a form, a multipart body or a body equals the bytes that are not UTF-8 and are written that way (`base64:/w==` and the byte `ff`).
+- In an event payload a DOM node is only its node name (its attributes, text and fields set by a script are not compared) and a window is only a window.
+- In an event payload the mark of a circular or repeated object does not say which object it points to: `x.a.up = x.a` equals `x.a.up = x`.
+- In an event payload the stack of an `Error`, its other fields that are not enumerable, symbol keys and the class of a plain object are not compared.
+- A relative `url()` in a custom property is resolved against the document, so `url(a.png)` in a stylesheet in a folder equals `url(/a.png)` on a page at the root.
+- An AngularJS binding that is not a text binding, on an attribute the browser reads (`title`, `id`, `class`), is dropped, as the spec says.
+- The default value of a `textarea` or an input (`defaultValue`, `defaultChecked`) is compared only through a reset in the case.
+- A masked string accepts any non-empty string, and a stored `7` passes for a stored random token.
+- At a noise path only the kind of the value is stored.
+- Data in `<script type="application/json">` or `application/ld+json` and the content of a `template` are not compared.
+- An `alert` or `confirm` in a `pagehide` handler, a call inside a window that `window.open` opened, what the page writes into that window, the dialog of `beforeunload`, and a window that a `target="_blank"` link opens are not logged.
+- An endless animation is held at its start, so a port with other keyframes passes.
+- A toast of 544 to 2559 ms passes against an original with 2000 ms.
+- `HttpOnly` cookies are dropped without a refusal. Since 5a `record` refuses an answer to `fetch` or XHR that sets a cookie. A cookie that the document, another file or a posted form sets is not refused.
+- The text inside a closed shadow root is not compared.
+
+A faithful port fails:
+
+- `%2F` against `%2f`, and `%41` against `A`, in a request path: the path counts as sent.
+- An AngularJS `.component()` binding that the port writes as a static attribute (`label="L"`). `[label]="'L'"` passes. Convention for ports: bind the input.
+- A text or storage value, or an attribute, that holds the origin of the page, and `itemscope="itemscope"` against `itemscope`.
+- A colour keyword against the same colour in numbers in `box-shadow`, `text-shadow`, `scrollbar-color` or a gradient. The browser gives a computed colour only to an element in the page, so asking it would change the page, and reading the value apart would need a CSS parser.
+- A custom property or a `var()` that writes the same colour another way.
+- An event payload with a whole framework event or another framework object in it: the internals are recorded. Emit plain data.
+- An event payload with more than 10,000 values where the original shares one object and the port holds copies.
+- A port that polls with a chain of timers against an original that polls with `setInterval`.
+
+The gate is not stable:
+
+- A frame fade (`test/enter.test.ts`, "Toggle fade" of the animate port against the `basic` case) can fail from a machine load near 8.
+- A worker that changes the DOM without end always exits 1, with a message that differs between runs.
+- A value that is random but agrees in both recording runs by chance is recorded without noise, and the gate can fail on it.
+- A gate under a CPU throttle of 20 hung once with a settled dialog. It was not seen again.
+
+Since the network tape (5a, 2026-11-25) a port that differs also passes when:
+
+- It leaves out a read, sends it more or less often, or sends the reads in another order, and shows the same (Q74). The summary lists it. Done-item 1 of step 3 is from now on measured without the three ports that only leave out a GET: `sync-none` on `sites/notes`, `get-none` and `get-noconfig` on `sites/r1`. All three pass now.
+- It reads a header of an answer other than `content-type` and `location`: neither the original nor the port gets one, so `record` already sees the page without it.
+- It sends another value in `authorization`, `x-xsrf-token` or `x-csrf-token`.
+- It sends a mutation before or after a read of the same step, where the answers and what the page shows stay the same.
+- It follows a redirect differently: `record` follows a redirect on the origin of the page itself, and the tape holds the final answer for the request that was sent.
+- It differs in what the HTTP cache or a preflight would have done. Routing switches the cache off on both sides and never sees a preflight.
+
+And a faithful port fails when an answer body holds the origin of the recording and the port follows that URL, or when it sends the original's read in a state in which the original never asked.
+
+Since step 5c `record` refuses a case with a detected secret. Nothing is redacted, so a secret that the checks do not find is stored as it is (see "Step 5c: secrets").
 
 ## Spec points
 
@@ -557,3 +609,13 @@ Both open points were decided by the maintainer ("Go with yours") and built:
 
 - Q34 for libraries: a library port may keep a component element of its own when it leaves no trace (Angular created it, no custom element of that name is registered, no attribute, `display: contents`). The sonner port now has `<ngx-toaster>` and still passes 9 of 9; with the rule switched off it fails 9 of 9.
 - 5b is built, and a custom property whose value is a length in pixels counts as a size. sonner's `--initial-height` and `--front-toast-height` are now compared only against the original run again. Details in `planning/m2/step5b.md`.
+
+## Step 5a: the network tape (2026-11-25)
+
+Built as SPIKE.md describes it, not reviewed by anyone who did not build it. `record` writes `tape.json` under the lock, the second run of `record`, `replay`, `gate` and the original run again are answered from it, and the recording format is `angular-anything/recording@4`. All 77 recordings were made again with the tool on the Mac. Numbers and the places where it differs from the spec are in `planning/m2/step5a.md`.
+
+## Step 5c: secrets (2026-11-26)
+
+Built as SPIKE.md describes it, not reviewed by anyone who did not build it. `record` refuses to write a case that holds a detected secret: a credential the run saw, one of five patterns, or a value in a password, one-time code or card field. A case accepts single false alarms in `accept`. A user name or a password in `--url` or `--original-url` is a usage error. The ten done-items hold. The 81 cases of the Tasks fixture, TodoMVC and sonner record with no finding, and their step files and tapes equal the stored ones, so no recording was made again. The flake left open after 5a was a real defect: `route.fetch` used the 5000 ms action timeout of the context. Details in `planning/m2/step5c.md`.
+
+Not covered: replacing secrets by fakes (so no recording of a login), personal data, a credential shorter than 16 characters, a credential inside a longer base64 text or in another encoding, a cookie that a script sets and removes within one step, what `replay` and `gate` print and store, and the value of a `fill` step in an error message (for example when the target of a password step matches no element).

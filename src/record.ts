@@ -6,11 +6,16 @@ import playwrightPackage from 'playwright/package.json' with { type: 'json' };
 import { describeStep, loadSuite } from './case.ts';
 import { writeLock } from './lock.ts';
 import { audit, compile, maskObservations, normalize } from './noise.ts';
-import { stored as storedLayers } from './layout.ts';
+import { measure, stored as storedLayers } from './layout.ts';
 import { runCase } from './run.ts';
+import { describeFinding, isAccepted, kindsOf, newSeen, scanCase, scanUrl } from './secrets.ts';
+import type { Finding as Secret } from './secrets.ts';
+import { maskRequest } from './tape.ts';
+import type { Finding } from './tape.ts';
 
-export const RECORDING_FORMAT = 'angular-anything/recording@3';
+export const RECORDING_FORMAT = 'angular-anything/recording@4';
 export const RECORDING_FILE = 'recording.json';
+export const TAPE_FILE = 'tape.json';
 
 export type Recording = {
   format: typeof RECORDING_FORMAT;
@@ -31,6 +36,22 @@ export const stepFile = (index: number): string => String(index + 1).padStart(2,
 
 export const toJson = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 
+function misfit({ step, request, actual, differs = [] }: Finding): string {
+  const reason = typeof actual === 'string' ? `: ${actual}` : '';
+  const parts = differs.length > 0 ? `, the parts that differ: ${differs.join(', ')}` : '';
+  return `step ${step}: the second run sent ${request.split('?')[0]}, which does not fit the tape of the first run${reason}${parts}`;
+}
+
+const refusal = (id: string, findings: Secret[]): string[] => {
+  const lines = [...new Set(findings.map(describeFinding))];
+  return [
+    `FAIL  ${id}`,
+    '      refused, a detected secret:',
+    ...lines.slice(0, LISTED).map((line) => `      ${line}`),
+    ...(lines.length > LISTED ? [`      and ${lines.length - LISTED} more`] : []),
+  ];
+};
+
 export const versions = (browser: Browser) => ({
   playwright: playwrightPackage.version,
   browser: `${browser.browserType().name()} ${browser.version()}`,
@@ -41,12 +62,29 @@ export async function record({ root, suite, source, url }: Options): Promise<num
   const browser = await chromium.launch();
   try {
     const pins = versions(browser);
-    console.log(`angular-anything record: suite ${suite}, source ${source}, url ${url.href}`);
+    const stored = join(root, 'recordings', source);
+    const ownerOf = async (id: string): Promise<Partial<Recording>> =>
+      readFile(join(stored, id, RECORDING_FILE), 'utf8')
+        .then((text) => JSON.parse(text) ?? {})
+        .catch(() => ({}));
+    const forget = async () => {
+      for (const { case: testCase } of cases) {
+        const { suite: owner } = await ownerOf(testCase.id);
+        if (typeof owner !== 'string' || owner === suite) await rm(join(stored, testCase.id), { recursive: true, force: true });
+      }
+    };
+    const inQuery = scanUrl(url, newSeen());
+    if (inQuery.length > 0) {
+      await forget();
+      for (const { case: testCase } of cases) console.log(refusal(testCase.id, inQuery).join('\n'));
+      return 1;
+    }
+    const address = `${url.origin}/${url.search === '' ? '' : ' (its query is not shown)'}`;
+    console.log(`angular-anything record: suite ${suite}, source ${source}, url ${address}`);
     console.log(`Playwright ${pins.playwright}, ${pins.browser}\n`);
     let recorded = 0;
     if (cases.length === 0) console.log(`FAIL  the suite ${suite} has no cases`);
     const known = new Set(cases.map((loaded) => loaded.case.id));
-    const stored = join(root, 'recordings', source);
     for (const entry of cases.length === 0 ? [] : await readdir(stored, { withFileTypes: true }).catch(() => [])) {
       if (!entry.isDirectory() || known.has(entry.name)) continue;
       const old: Partial<Recording> = await readFile(join(stored, entry.name, RECORDING_FILE), 'utf8')
@@ -57,11 +95,9 @@ export async function record({ root, suite, source, url }: Options): Promise<num
       console.log(`removed the recording of "${entry.name}", the suite ${suite} has no such case`);
     }
     for (const { case: testCase, sha256 } of cases) {
-      const directory = join(root, 'recordings', source, testCase.id);
-      const owner: Partial<Recording> | null = await readFile(join(directory, RECORDING_FILE), 'utf8')
-        .then(JSON.parse)
-        .catch(() => null);
-      if (typeof owner?.suite === 'string' && owner.suite !== suite) {
+      const directory = join(stored, testCase.id);
+      const owner = await ownerOf(testCase.id);
+      if (typeof owner.suite === 'string' && owner.suite !== suite) {
         console.log(
           `FAIL  ${testCase.id}\n      ${join('recordings', source, testCase.id)} holds the recording of the suite ${owner.suite}: ` +
             `record the suite ${suite} with another --source`,
@@ -69,35 +105,76 @@ export async function record({ root, suite, source, url }: Options): Promise<num
         continue;
       }
       await rm(directory, { recursive: true, force: true });
-      const first = await runCase(browser, testCase, url);
-      const second = first.error ? first : await runCase(browser, testCase, url);
-      const error = first.error ?? second.error;
-      if (error) {
-        console.log(`FAIL  ${testCase.id}\n      ${error}`);
+      const seen = newSeen();
+      const run = (replayed?: Parameters<typeof runCase>[6]) =>
+        runCase(browser, testCase, url, undefined, undefined, undefined, replayed, seen);
+      const first = await run();
+      const stopped = first.refusals.length > 0 || first.error !== undefined;
+      const second = stopped ? first : await run({ entries: first.tape, second: true });
+      const misfits = second.findings.map(misfit);
+      const refusals = first.refusals.length > 0 ? first.refusals : second.refusals;
+      const error = refusals.length > 0 ? undefined : (first.error ?? second.error);
+
+      const noise = compile(testCase.noise ?? []);
+      const measured = testCase.measured ?? [];
+      const matched = new Set<(typeof measured)[number]>();
+      const read = (done: typeof first) => done.steps.map((step) => normalize(measure(step.observation, measured, matched), noise));
+      const left = read(first);
+      const written = maskObservations(noise, left, left).observations.map(storedLayers);
+      const found = scanCase({ seen, observations: written, fields: first.steps.map((step) => step.secretFields), tape: first.tape, noise });
+      const inUrl = scanUrl(url, seen);
+      const accepted = found.filter((each) => isAccepted(each, testCase.accept ?? []));
+      const secrets = [...inUrl, ...found.filter((each) => !accepted.includes(each))];
+      const report = (lines: string[]) => {
+        for (const line of lines) {
+          const kinds = kindsOf(line, seen.credentials);
+          console.log(`      ${kinds.length > 0 ? `a line is left out, it holds a detected secret: ${kinds.join(', ')}` : line}`);
+        }
+      };
+      if (secrets.length > 0) {
+        console.log(refusal(testCase.id, secrets).join('\n'));
+        report(refusals);
+        if (error) report([error]);
+        if (inUrl.length > 0) {
+          await forget();
+          recorded = 0;
+          break;
+        }
+        continue;
+      }
+      if (refusals.length > 0 || error) {
+        console.log(`FAIL  ${testCase.id}`);
+        report([...refusals, ...(error ? [error] : []), ...misfits]);
         continue;
       }
 
       const different = first.steps.findIndex((step, index) => step.frames !== second.steps[index].frames);
       if (different >= 0) {
         const name = describeStep(testCase.steps[different]);
-        console.log(
-          `FAIL  ${testCase.id}\n      step ${different + 1} (${name}): the first run took ${first.steps[different].frames} frames, ` +
+        console.log(`FAIL  ${testCase.id}`);
+        report([
+          `step ${different + 1} (${name}): the first run took ${first.steps[different].frames} frames, ` +
             `the second ${second.steps[different].frames}`,
-        );
+          ...misfits,
+        ]);
         continue;
       }
 
-      const noise = compile(testCase.noise ?? []);
-      const left = first.steps.map((step) => normalize(step.observation, noise));
-      const right = second.steps.map((step) => normalize(step.observation, noise));
-      const audited = audit(noise, left, right);
-      if (audited.problems.length > 0 || audited.unnamed.length > 0) {
+      const right = read(second);
+      const unmatched = measured.filter((entry) => !matched.has(entry));
+      if (unmatched.length > 0) {
         console.log(`FAIL  ${testCase.id}`);
-        for (const problem of audited.problems.slice(0, LISTED)) console.log(`      ${problem}`);
+        for (const entry of unmatched) console.log(`      the measured entry ${entry.layer} ${entry.path} matches nothing in any step`);
+        continue;
+      }
+      const audited = audit(noise, left, right);
+      if (misfits.length > 0 || audited.problems.length > 0 || audited.unnamed.length > 0) {
+        console.log(`FAIL  ${testCase.id}`);
+        report([...misfits.slice(0, LISTED), ...audited.problems.slice(0, LISTED)]);
         if (audited.problems.length > LISTED) console.log(`      and ${audited.problems.length - LISTED} more`);
         if (audited.unnamed.length > 0) {
           console.log('      The two runs of the original differ at these paths, and the case does not name them in "noise". Add them:');
-          for (const entry of audited.unnamed.slice(0, LISTED)) console.log(`        ${JSON.stringify({ layer: entry.layer, path: entry.path })}`);
+          report(audited.unnamed.slice(0, LISTED).map((entry) => `  ${JSON.stringify({ layer: entry.layer, path: entry.path })}`));
           if (audited.unnamed.length > LISTED) console.log(`        and ${audited.unnamed.length - LISTED} more`);
         }
         continue;
@@ -113,6 +190,7 @@ export async function record({ root, suite, source, url }: Options): Promise<num
       for (const [index, step] of first.steps.entries()) {
         await writeFile(join(directory, `${stepFile(index)}.json`), toJson(storedLayers(observations[index])));
       }
+      await writeFile(join(directory, TAPE_FILE), toJson(first.tape.map((entry) => maskRequest(entry, noise))));
       const recording: Recording = {
         format: RECORDING_FORMAT,
         suite,
@@ -127,6 +205,7 @@ export async function record({ root, suite, source, url }: Options): Promise<num
       const lock = await writeLock(directory, { ...pins, case: sha256 });
       recorded++;
       console.log(`ok    ${testCase.id}  steps: ${first.steps.length}, frames: ${recording.frames.join(' ')}, masked: ${masked}, root: ${lock.root}`);
+      for (const line of new Set(accepted.map(describeFinding))) console.log(`      accepted: ${line}`);
       noise.forEach((entry, at) => console.log(`      noise ${entry.layer} ${entry.path}: ${counts[at]} values masked`));
       for (const entry of audited.agreed) console.log(`      noise entry without a difference between the two runs: ${entry.layer} ${entry.path}`);
       if (screenshotNoise.length > 0) console.log(`      screenshots that differed between the two runs, at step ${screenshotNoise.join(', ')}`);

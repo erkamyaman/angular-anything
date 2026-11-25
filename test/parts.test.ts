@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { compare } from '../src/compare.ts';
 import type { Observation } from '../src/compare.ts';
-import { bodyParts, storageValue, urlParts } from '../src/parts.ts';
+import { bodyParts, queryFields, storageValue, urlParts } from '../src/parts.ts';
 
 const base = new URL('http://localhost:4104/');
 
@@ -252,4 +252,40 @@ test('a boundary written in quotes is read, and so is one that is not', () => {
   const quoted = bodyParts(body, 'multipart/form-data; boundary="a b"');
   assert.deepEqual(quoted, { $aa: 'multipart', fields: { title: [{ content: 'Report' }] } });
   assert.deepEqual(bodyParts(multipart('plain', field('title', 'Report')), 'multipart/form-data; boundary=plain; charset=utf-8'), quoted);
+});
+
+test('a body with bytes that are not UTF-8 is compared by its bytes, whatever its type', () => {
+  const bytes = (...values: number[]) => Buffer.from(values);
+  for (const type of ['application/x-www-form-urlencoded', 'text/plain;charset=UTF-8', 'application/octet-stream', 'application/json', '']) {
+    assert.notDeepEqual(bodyParts(bytes(97, 61, 0xff), type), bodyParts(bytes(97, 61, 0xfe), type), type);
+    assert.deepEqual(bodyParts(bytes(97, 61, 0xff), type), bodyParts(bytes(97, 61, 0xff), type), type);
+  }
+  assert.equal(bodyParts(bytes(0, 0xff, 1), 'application/octet-stream'), 'base64:AP8B');
+  assert.notDeepEqual(bodyParts(bytes(0, 0xff, 1), 'application/octet-stream'), bodyParts(bytes(0, 0xfe, 1), 'application/octet-stream'));
+  assert.deepEqual(bodyParts(bytes(97, 61, 0xff), 'application/x-www-form-urlencoded'), { $aa: 'form', fields: { a: ['base64:/w=='] } });
+  assert.deepEqual(bodyParts(bytes(0xff, 61, 49), 'application/x-www-form-urlencoded'), { $aa: 'form', fields: { 'base64:/w==': ['1'] } });
+  assert.deepEqual(bodyParts(Buffer.from('é=𝄞'), 'application/x-www-form-urlencoded'), { $aa: 'form', fields: { é: ['𝄞'] } });
+  assert.deepEqual(queryFields('?é=𝄞'), { é: ['𝄞'] });
+});
+
+test('a multipart name and a file name with bytes that are not UTF-8 are compared by their bytes', () => {
+  const body = (head: string) => buffer(`--B\r\nContent-Disposition: form-data; ${head}\r\n\r\nx\r\n--B--\r\n`);
+  const read = (head: string) => bodyParts(body(head), 'multipart/form-data; boundary=B') as { fields: Record<string, { filename?: string }[]> };
+  assert.deepEqual(Object.keys(read('name="\xff"').fields), ['base64:/w==']);
+  assert.notDeepEqual(read('name="\xff"'), read('name="\xfe"'));
+  assert.equal(read('name="f"; filename="\xff"').fields.f[0].filename, 'base64:/w==');
+  assert.notDeepEqual(read('name="f"; filename="\xff"'), read('name="f"; filename="\xfe"'));
+});
+
+test('a byte order mark is part of a value, and a field without "=" is decoded as a name', () => {
+  assert.deepEqual(queryFields('?q=%EF%BB%BFa'), { q: ['﻿a'] });
+  assert.deepEqual(queryFields('?%41+b&c'), { 'A b': [''], c: [''] });
+});
+
+test('a boundary in quotes is read where the body alone does not give it away', () => {
+  const body = multipart('a b', `Content-Type: text/plain\r\n${field('title', 'Report')}`);
+  assert.deepEqual(bodyParts(body, 'multipart/form-data; boundary="a b"'), {
+    $aa: 'multipart',
+    fields: { title: [{ content: 'Report', type: 'text/plain' }] },
+  });
 });

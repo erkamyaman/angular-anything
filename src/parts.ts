@@ -73,20 +73,8 @@ export function fieldsOf(pairs: Iterable<[string, string]>): Fields {
 const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 function formDecoded(text: string): string {
-  const bytes: number[] = [];
-  const raw = text.replace(/\+/g, ' ');
-  for (let at = 0; at < raw.length; ) {
-    const hex = raw[at] === '%' ? /^[0-9a-fA-F]{2}$/.exec(raw.slice(at + 1, at + 3)) : null;
-    if (hex) {
-      bytes.push(parseInt(hex[0], 16));
-      at += 3;
-    } else {
-      const point = raw.codePointAt(at)!;
-      bytes.push(...Buffer.from(String.fromCodePoint(point), 'utf8'));
-      at += point > 0xffff ? 2 : 1;
-    }
-  }
-  const buffer = Buffer.from(bytes);
+  const raw = text.replace(/\+/g, ' ').replace(/%([0-9a-fA-F]{2})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+  const buffer = Buffer.from(raw, 'latin1');
   try {
     return decoder.decode(buffer);
   } catch {
@@ -94,9 +82,10 @@ function formDecoded(text: string): string {
   }
 }
 
-export function queryFields(search: string): Fields {
+export function queryFields(search: string | Buffer): Fields {
   const pairs: [string, string][] = [];
-  for (const piece of search.replace(/^\?/, '').split('&')) {
+  const bytes = Buffer.from(search).toString('latin1');
+  for (const piece of bytes.replace(/^\?/, '').split('&')) {
     if (piece === '') continue;
     const at = piece.indexOf('=');
     pairs.push(at < 0 ? [formDecoded(piece), ''] : [formDecoded(piece.slice(0, at)), formDecoded(piece.slice(at + 1))]);
@@ -155,13 +144,13 @@ function multipartParts(body: Buffer, boundary: string): Record<string, Part[]> 
     const disposition = headers.get('content-disposition') ?? '';
     const parameter = (key: string) =>
       new RegExp(`(?:^|;)\\s*${key}="((?:[^"\\\\]|\\\\.)*)"`, 'i').exec(disposition)?.[1];
-    const name = Buffer.from(parameter('name') ?? '', 'latin1').toString('utf8');
+    const name = text(Buffer.from(parameter('name') ?? '', 'latin1'));
     const filename = parameter('filename');
     const part: Part =
       filename === undefined
         ? { content: text(content) }
         : {
-            filename: Buffer.from(filename, 'latin1').toString('utf8'),
+            filename: text(Buffer.from(filename, 'latin1')),
             size: content.length,
             content: `sha256:${createHash('sha256').update(content).digest('hex')}`,
           };
@@ -178,7 +167,7 @@ export function bodyParts(body: Buffer | null, contentType: string): Body {
   if (body === null) return null;
   const type = contentType.toLowerCase();
   if (type.startsWith('application/x-www-form-urlencoded')) {
-    return { $aa: 'form', fields: queryFields(body.toString('utf8')) };
+    return { $aa: 'form', fields: queryFields(body) };
   }
   if (type.startsWith('multipart/') || type === '') {
     const declared = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType);
@@ -187,6 +176,6 @@ export function bodyParts(body: Buffer | null, contentType: string): Body {
     const fields = boundary === undefined ? undefined : multipartParts(body, boundary);
     if (fields) return { $aa: 'multipart', fields };
   }
-  const string = body.toString('utf8');
+  const string = text(body);
   return (expandJson(string, false) as Body | undefined) ?? string;
 }

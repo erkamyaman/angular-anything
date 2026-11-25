@@ -18,7 +18,7 @@ export type Observation = {
   events: { name: string; payload: unknown }[];
   effects: {
     requests: { method: string; url: UrlParts; body: Body }[];
-    gets: UrlParts[];
+    gets?: UrlParts[];
     storage: Record<string, unknown>;
     url: UrlParts;
     title: string;
@@ -38,7 +38,9 @@ export const LAYER_NAMES: Record<Layer, string> = {
   effects: 'side effects',
 };
 
-export type Difference = { path: string; expected?: unknown; actual?: unknown };
+export type DifferenceKind = 'text' | 'value' | 'type' | 'missing' | 'extra' | 'tape';
+
+export type Difference = { path: string; expected?: unknown; actual?: unknown; kind?: DifferenceKind };
 
 export type Seen = { layer: Layer; path: string; value: unknown; group?: number; from?: string };
 
@@ -61,7 +63,7 @@ function diffValue(expected: unknown, actual: unknown, path: string, out: Out, r
     if (kindOf(actual) === expected.kind && !isPlaceholder(actual)) {
       out.seen.push({ layer: out.layer, path, value: actual, group: expected.group, from: expected.from });
     } else {
-      out.differences.push({ path, expected: masked(expected), actual });
+      out.differences.push({ path, expected: masked(expected), actual, kind: actual === undefined ? 'missing' : 'type' });
     }
   } else if (isNumberNode(expected) || isNumberNode(actual)) {
     const numeric = (value: unknown) => isNumberNode(value) || typeof value === 'number';
@@ -182,7 +184,7 @@ export function compareCase(expected: Observation[], actual: Observation[]): Rec
     }
   });
   const tie = (step: number, entry: Seen, reference: string) => {
-    results[step][entry.layer].differences.push({ path: entry.path, expected: reference, actual: entry.value });
+    results[step][entry.layer].differences.push({ path: entry.path, expected: reference, actual: entry.value, kind: 'value' });
   };
   for (const members of groups.values()) {
     const [first, ...others] = members;

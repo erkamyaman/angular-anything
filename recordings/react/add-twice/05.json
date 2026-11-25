@@ -2142,7 +2142,6 @@
   "events": [],
   "effects": {
     "requests": [],
-    "gets": [],
     "storage": {
       "tasks": [
         {

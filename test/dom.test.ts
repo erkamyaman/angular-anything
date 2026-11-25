@@ -509,6 +509,81 @@ test('a url() in a style attribute compares equal when it is relative, or absolu
   assert.equal(node(fragment).inline?.filter, 'url("#soft")');
 });
 
+const sameOnTwoOrigins = async (page: (origin: string) => { head?: string; body?: string; css?: string }) => {
+  const first = await captureOn('http://one.test', page('http://one.test'));
+  const second = await captureOn('http://two.test:81', page(''));
+  assert.deepEqual(second.dom, first.dom);
+  assert.deepEqual(second.style, first.style);
+  return first;
+};
+
+const h1 = 'html[1]/body[1]/h1[1]';
+
+test('a url() in a custom property compares equal when it is relative, or absolute on the own origin', async () => {
+  const sheet = await sameOnTwoOrigins((origin) => ({ css: `h1 { --u: url(${origin}/img/a.png); --two: 1px URL("${origin}/b.png"), url('${origin}/c.png') }` }));
+  assert.equal(sheet.style[h1].style['--u'], 'url("[page-origin]/img/a.png")');
+  assert.equal(sheet.style[h1].style['--two'], '1px url("[page-origin]/b.png"), url("[page-origin]/c.png")');
+  await sameOnTwoOrigins((origin) => ({ body: `<h1 style="--u: url(${origin}/a.svg)">x</h1>` }));
+  await sameOnTwoOrigins((origin) => ({ body: `<h1 style="--u: url(${origin ? `${origin}/a.svg` : 'a.svg'})">x</h1>` }));
+  const value = async (written: string) => (await captureOn('http://one.test', { css: `h1 { --u: ${written} }` })).style[h1].style['--u'];
+  assert.notEqual(await value('url(/a.svg)'), await value('url(/b.svg)'), 'another file');
+  assert.equal(await value('url(http://two.test:81/a.svg)'), 'url("http://two.test:81/a.svg")', 'another host');
+  assert.equal(await value('url(#soft)'), 'url(#soft)');
+  assert.equal(await value('myurl(/a.svg)'), 'myurl(/a.svg)', 'another function');
+});
+
+test('a url() with a quote or an escape in it is read to its end', async () => {
+  const quoted = await sameOnTwoOrigins((origin) => ({
+    body: `<h1 style="background-image: url('${origin}/a&quot;b.svg'); --u: url('${origin}/a&quot;b.svg'); --v: url(${origin}/c\\)d\\27 .svg)">x</h1>`,
+  }));
+  const [element] = find(quoted.dom, 'h1');
+  assert.equal(element.inline?.['background-image'], 'url("[page-origin]/a%22b.svg")');
+  assert.equal(element.inline?.['--u'], 'url("[page-origin]/a%22b.svg")');
+  assert.equal(element.inline?.['--v'], `url("[page-origin]/c)d'.svg")`);
+  assert.equal(quoted.style[h1].style['--u'], 'url("[page-origin]/a%22b.svg")');
+});
+
+test('a quote in a data url() stays escaped, and a url() of several megabytes is read', async () => {
+  const body = `<h1>x</h1><script>
+    const { style } = document.querySelector('h1');
+    style.setProperty('--q', 'url("data:,a\\\\"b")');
+    style.setProperty('background-image', 'url("data:,' + 'a'.repeat(12e6) + '")');
+    style.setProperty('content', '"' + 'b'.repeat(12e6) + '"');
+  </script>`;
+  const [element] = find((await captureOn('http://one.test', { body })).dom, 'h1');
+  assert.equal(element.inline?.['--q'], 'url("data:,a\\"b")');
+  assert.equal(element.inline?.['background-image'].length, 'url("data:,")'.length + 12e6);
+  assert.equal(element.inline?.content.length, '""'.length + 12e6);
+});
+
+test('text in a CSS string that looks like url() stays as written', async () => {
+  for (const [a, b] of [
+    ["'url(a)'", "'url(/a)'"],
+    ["'say \\' url(a)'", "'say \\' url(/a)'"],
+  ]) {
+    const read = async (value: string) => {
+      const captured = await captureOn('http://one.test', { body: `<h1 style="--s: ${value}; quotes: ${value} ${value}">x</h1>` });
+      return { inline: find(captured.dom, 'h1')[0].inline!, computed: captured.style[h1].style['--s'] };
+    };
+    const [left, right] = [await read(a), await read(b)];
+    assert.notEqual(left.inline['--s'], right.inline['--s'], a);
+    assert.notEqual(left.inline.quotes, right.inline.quotes, a);
+    assert.notEqual(left.computed, right.computed, a);
+  }
+});
+
+test('a computed value that holds "px" has the origin taken out of its url() as well', async () => {
+  const css = 'h1 { background-image: url(/icons/a-24px.svg); mask-image: image-set(url(/b.png) 1dppx); cursor: url(/px.png) 2 2, auto; height: 10px }';
+  const sheet = await sameOnTwoOrigins(() => ({ css }));
+  assert.equal(sheet.style[h1].style['background-image'], 'url("[page-origin]/icons/a-24px.svg")');
+  for (const property of ['mask-image', 'cursor']) assert.match(sheet.style[h1].style[property], /\[page-origin\]/, property);
+  for (const entry of Object.values(sheet.style)) assert.doesNotMatch(JSON.stringify(entry), /one\.test/);
+  const inline = await sameOnTwoOrigins((origin) => ({ body: `<h1 style="background-image: url(${origin}/icons/px.svg)">x</h1>` }));
+  assert.equal(inline.style[h1].style['background-image'], 'url("[page-origin]/icons/px.svg")');
+  const other = await captureOn('http://one.test', { css: css.replace('a-24px', 'a-32px') });
+  assert.notEqual(other.style[h1].style['background-image'], sheet.style[h1].style['background-image']);
+});
+
 test('a custom property registered with inherits: false is compared per element', async () => {
   const page = (registration: string) => `
     <script>${registration}</script>
@@ -790,6 +865,21 @@ test('AngularJS: itemscope, exportparts, is and the SVG presentation attributes 
   );
   assert.deepEqual(find(tree, 'div')[1].attrs, { exportparts: 'x', is: 'y', itemscope: '' });
   assert.deepEqual(find(tree, 'text')[0].attrs, { 'font-size': '9', opacity: '.5', stroke: 'red', 'text-anchor': 'middle' });
+});
+
+test('AngularJS: a property of the element that is not enumerable does not make the attribute read by the browser', async () => {
+  const hidden = "Object.defineProperty(HTMLInputElement.prototype, 'probe', { value: 1, configurable: true });";
+  const modules = `.directive('probe', () => ({ restrict: 'A' }))`;
+  const tree = await dom('<div id="root"></div>', `${hidden}${ajs('<input probe="1" name="n">', modules)}`);
+  assert.deepEqual(find(tree, 'input')[0].attrs, { name: 'n' });
+});
+
+test('AngularJS: a global attribute is read by the browser also on an SVG element that has no property for it', async () => {
+  const names = ['popover', 'enterkeyhint', 'inputmode', 'translate', 'lang'];
+  const modules = names.map((name) => `.directive('${name}', () => ({ restrict: 'A' }))`).join('');
+  const markup = `<svg><g ${names.map((name) => `${name}="v"`).join(' ')}></g></svg>`;
+  const tree = await dom('<div id="root"></div>', ajs(markup, modules));
+  assert.deepEqual(Object.keys(find(tree, 'g')[0].attrs ?? {}), [...names].sort());
 });
 
 test('an element named angular that is no framework does not break the capture', async () => {

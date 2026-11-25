@@ -1936,7 +1936,6 @@
   "events": [],
   "effects": {
     "requests": [],
-    "gets": [],
     "storage": {},
     "url": {
       "path": [

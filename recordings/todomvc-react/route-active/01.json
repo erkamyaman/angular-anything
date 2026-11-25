@@ -1471,14 +1471,6 @@
   "events": [],
   "effects": {
     "requests": [],
-    "gets": [
-      {
-        "path": [
-          "learn.json"
-        ],
-        "query": {}
-      }
-    ],
     "storage": {},
     "url": {
       "path": [

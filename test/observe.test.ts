@@ -141,7 +141,7 @@ test('the requests of a step keep their method, and the GETs of fetch and XHR ar
     ],
   );
   assert.deepEqual(effects.requests[0].body, { a: 1 });
-  assert.deepEqual(effects.gets.map((get) => [get.path.join('/'), get.query]).sort(), [
+  assert.deepEqual(effects.gets!.map((get) => [get.path.join('/'), get.query]).sort(), [
     ['api/a', { x: ['1'] }],
     ['api/x', { y: ['2'] }],
   ]);

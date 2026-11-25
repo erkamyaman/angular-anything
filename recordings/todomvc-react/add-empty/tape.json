@@ -1,0 +1,22 @@
+[
+  {
+    "step": 1,
+    "epoch": 0,
+    "method": "GET",
+    "url": {
+      "path": [
+        "learn.json"
+      ],
+      "query": {}
+    },
+    "body": null,
+    "credentials": [],
+    "answer": {
+      "status": 404,
+      "headers": {
+        "content-type": "text/plain; charset=utf-8"
+      },
+      "body": "Not found: GET /learn.json\n"
+    }
+  }
+]

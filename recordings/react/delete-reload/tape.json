@@ -1,0 +1,25 @@
+[
+  {
+    "step": 7,
+    "epoch": 0,
+    "method": "POST",
+    "url": {
+      "path": [
+        "api",
+        "tasks"
+      ],
+      "query": {}
+    },
+    "body": {
+      "title": "Call mom"
+    },
+    "credentials": [],
+    "answer": {
+      "status": 201,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"title\":\"Call mom\"}"
+    }
+  }
+]

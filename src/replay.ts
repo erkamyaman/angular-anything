@@ -1,18 +1,25 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { describeStep, loadSuite } from './case.ts';
 import { compareCase, LAYERS, LAYER_NAMES } from './compare.ts';
 import type { Layer, LayerResult } from './compare.ts';
-import { laidOut, stored } from './layout.ts';
+import { laidOut, measure, stored } from './layout.ts';
+import { checkLiterals } from './literals.ts';
+import type { Sources } from './literals.ts';
 import type { Observation } from './compare.ts';
 import { checkLock, LOCK_FILE } from './lock.ts';
 import { compile, maskObservations, normalize, placeholdersOutside } from './noise.ts';
-import { RECORDING_FILE, RECORDING_FORMAT, stepFile, toJson, versions } from './record.ts';
+import { redactReport, redactStep } from './redact.ts';
+import { RECORDING_FILE, RECORDING_FORMAT, stepFile, TAPE_FILE, toJson, versions } from './record.ts';
 import type { Options, Recording } from './record.ts';
-import { finish, REPORT_FORMAT, stepReport, summarize } from './report.ts';
-import type { CaseReport, Report, StepReport } from './report.ts';
+import { distinct, finish, locate, REPORT_FORMAT, stepReport, summarize } from './report.ts';
+import type { CaseReport, DriftState, Found, Report, StepReport } from './report.ts';
 import { runCase } from './run.ts';
+import { maskedOutside, readNotes } from './tape.ts';
+import type { TapeEntry } from './tape.ts';
+
+const UNREACHABLE = /net::ERR_(CONNECTION_|NAME_NOT_RESOLVED|ADDRESS_|EMPTY_RESPONSE|TIMED_OUT)/;
 
 function firstDifference(results: Record<Layer, LayerResult>[]): string | undefined {
   for (const [index, layers] of results.entries()) {
@@ -24,15 +31,27 @@ function firstDifference(results: Record<Layer, LayerResult>[]): string | undefi
   return undefined;
 }
 
-export async function replay({ root, suite, source, url, gate, original }: Options & { gate: boolean; original?: URL }): Promise<number> {
+type Replaying = Options & { gate: boolean; original?: URL; redact?: boolean; drift?: boolean; sources?: Sources };
+
+export async function replay(options: Replaying): Promise<number> {
+  const { root, suite, source, url, gate, original, redact, drift, sources } = options;
   const out = join(root, 'reports', source);
   const cases = await loadSuite(root, suite);
+  const literals =
+    sources &&
+    (await checkLiterals({
+      recorded: join(root, 'recordings', source),
+      ids: cases.map((loaded) => loaded.case.id),
+      source,
+      originalSource: resolve(root, sources.originalSource),
+      portSource: resolve(root, sources.portSource),
+    }));
   const browser = await chromium.launch();
   try {
     const pins = versions(browser);
     const report: Report = {
       format: REPORT_FORMAT,
-      command: gate ? 'gate' : 'replay',
+      command: drift ? 'drift' : gate ? 'gate' : 'replay',
       suite,
       source,
       url: url.href,
@@ -40,8 +59,10 @@ export async function replay({ root, suite, source, url, gate, original }: Optio
       ...pins,
       result: 'fail',
       cases: [],
+      ...(literals ? { literals } : {}),
     };
     await mkdir(out, { recursive: true });
+    const found: Found[] = [];
 
     for (const { case: testCase, sha256 } of cases) {
       const recorded = join(root, 'recordings', source, testCase.id);
@@ -90,13 +111,29 @@ export async function replay({ root, suite, source, url, gate, original }: Optio
         if (outside.length > 0) {
           throw new Error(`it masks values that the case does not name as noise (${outside[0]}), so it has to be recorded again`);
         }
+        const tape: TapeEntry[] = JSON.parse(await readFile(join(recorded, TAPE_FILE), 'utf8'));
+        if (!Array.isArray(tape)) throw new Error('its tape is not a list, so it has to be recorded again');
+        const [unnamed] = maskedOutside(tape, noise);
+        if (unnamed !== undefined) {
+          throw new Error(`it masks values that the case does not name as noise (tape: ${unnamed}), so it has to be recorded again`);
+        }
+        item.credentials = [...new Set(tape.flatMap((entry) => entry.credentials))];
         let again: Awaited<ReturnType<typeof runCase>> | undefined;
         let mismatch: string | undefined;
+        const measuredRun = async (address: URL) => {
+          const done = await runCase(browser, testCase, address, undefined, frames, undefined, { entries: tape });
+          for (const step of done.steps) step.observation = measure(step.observation, testCase.measured ?? []);
+          return done;
+        };
         if (original) {
-          again = await runCase(browser, testCase, original, undefined, frames);
-          mismatch = again.error ?? firstDifference(compareCase(expected, again.steps.map((step) => stored(normalize(step.observation, noise)))));
+          again = await measuredRun(original);
+          const [found] = again.findings;
+          mismatch =
+            again.error ??
+            (found ? `step ${found.step}, tape ${found.request}: ${JSON.stringify(found.actual)}` : undefined) ??
+            firstDifference(compareCase(expected, again.steps.map((step) => stored(normalize(step.observation, noise)))));
         }
-        const run = await runCase(browser, testCase, url, undefined, frames);
+        const run = await measuredRun(url);
         const actual = run.steps.map((step) => normalize(step.observation, noise));
         const results = compareCase(expected.slice(0, actual.length), actual.map(stored));
         const sameSession = again && !mismatch && again.steps.length === run.steps.length ? again : undefined;
@@ -117,15 +154,36 @@ export async function replay({ root, suite, source, url, gate, original }: Optio
           const before = sameSession?.steps[index]?.screenshot;
           if (before && recording.screenshotNoise.includes(index + 1)) screenshot = 'masked';
           else if (before) screenshot = step.screenshot.equals(before) ? 'identical' : 'different';
-          if (screenshot === 'different' && before) {
+          if (screenshot === 'different' && before && !redact) {
             await mkdir(join(out, testCase.id), { recursive: true });
             await writeFile(join(out, testCase.id, `${name}.png`), step.screenshot);
             await writeFile(join(out, testCase.id, `${name}.original.png`), before);
           }
-          item.steps.push(stepReport(index + 1, describeStep(testCase.steps[index]), step, screenshot, layers, step.unread));
+          const findings = run.findings.filter((finding) => finding.step === index + 1);
+          layers.effects.differences.unshift(
+            ...findings.map(({ request, expected, actual }) => ({ path: `tape ${request}`, expected, actual, kind: 'tape' as const })),
+          );
+          for (const layer of LAYERS) {
+            for (const difference of layers[layer].differences) {
+              found.push({ case: testCase.id, step: index + 1, difference: locate(layer, difference) });
+            }
+          }
+          const reads = readNotes(tape, run.taken, index + 1, noise);
+          item.steps.push(stepReport(index + 1, (redact ? redactStep : describeStep)(testCase.steps[index]), step, screenshot, layers, step.unread, reads));
+        }
+        if (drift) {
+          const state = (error: string | undefined, differs: boolean): DriftState =>
+            error !== undefined && UNREACHABLE.test(error) ? 'not checked' : differs ? 'differs' : 'matches';
+          item.drift = {
+            original: state(again?.error, mismatch !== undefined),
+            port: state(run.error, run.error !== undefined || item.steps.some((step) => step.result === 'fail')),
+          };
         }
         item.error = mismatch ? `the original at ${original!.href} does not match its recording: ${mismatch}; sizes, positions and screenshots were not compared` : run.error;
         if (mismatch && run.error) item.error += `; the port: ${run.error}`;
+        for (const { step, request, actual } of run.findings) {
+          if (step > run.steps.length) item.error += `; tape: ${request}: ${typeof actual === 'string' ? actual : JSON.stringify(actual)}`;
+        }
       } catch (error) {
         item.error = `cannot replay against the recording: ${(error as Error).message}`;
       }
@@ -145,8 +203,11 @@ export async function replay({ root, suite, source, url, gate, original }: Optio
       }
     }
 
-    const summary = summarize(finish(report));
-    await writeFile(join(out, 'report.json'), toJson(report));
+    report.distinct = distinct(found);
+    const finished = finish(report);
+    const shown = redact ? redactReport(finished) : finished;
+    const summary = summarize(shown);
+    await writeFile(join(out, 'report.json'), toJson(shown));
     await writeFile(join(out, 'summary.txt'), `${summary}\n`);
     console.log(`${summary}\n\nReport: ${join('reports', source, 'report.json')}`);
     return report.result === 'pass' ? 0 : 1;

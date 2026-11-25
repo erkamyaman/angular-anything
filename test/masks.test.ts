@@ -332,11 +332,11 @@ test('the gets of one step are in an order that does not depend on a masked valu
   const entries = compile(noise);
   const first = normalize(step('zzz', 'aaa'), entries);
   const second = normalize(step('aaa', 'zzz'), entries);
-  assert.deepEqual(first.effects.gets.map((each) => each.query.id), [['1'], ['2']]);
-  assert.deepEqual(second.effects.gets.map((each) => each.query.id), [['1'], ['2']]);
-  assert.deepEqual(normalize(step('aaa', 'zzz', true), entries).effects.gets.map((each) => each.query.id), [['1'], ['2']], 'the order of arrival does not count');
+  assert.deepEqual(first.effects.gets!.map((each) => each.query.id), [['1'], ['2']]);
+  assert.deepEqual(second.effects.gets!.map((each) => each.query.id), [['1'], ['2']]);
+  assert.deepEqual(normalize(step('aaa', 'zzz', true), entries).effects.gets!.map((each) => each.query.id), [['1'], ['2']], 'the order of arrival does not count');
   const plain = normalize(step('zzz', 'aaa'), []);
-  assert.deepEqual(plain.effects.gets.map((each) => each.query.id), [['2'], ['1']], 'without noise the whole URL orders the list');
+  assert.deepEqual(plain.effects.gets!.map((each) => each.query.id), [['2'], ['1']], 'without noise the whole URL orders the list');
 });
 
 test('a text node of the DOM and of the accessibility tree can be noise, and an element cannot take its place', () => {

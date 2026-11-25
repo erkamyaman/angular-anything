@@ -52,8 +52,8 @@ const ports: [string, string, string, number][] = [
   ['r1', 'empty-storage', 'toggle', 1],
   ['r1', 'stored-flag', 'add', 1],
   ['r1', 'get-other', 'refresh', 1],
-  ['r1', 'get-none', 'refresh', 1],
-  ['r1', 'get-noconfig', 'refresh', 1],
+  ['r1', 'get-none', 'refresh', 0],
+  ['r1', 'get-noconfig', 'refresh', 0],
   ['r1', 'form-field', 'upload', 1],
   ['r1', 'form-empty', 'upload', 1],
   ['r1', 'form-nopost', 'upload', 1],
@@ -64,7 +64,7 @@ const ports: [string, string, string, number][] = [
   ['notes', '', 'keep', 0],
   ['notes', 'cart7', 'keep', 0],
   ['notes', 'store', 'keep', 1],
-  ['notes', 'sync-none', 'keep', 1],
+  ['notes', 'sync-none', 'keep', 0],
   ['notes', 'sync-other', 'keep', 1],
   ['notes', 'field', 'keep', 1],
   ['notes', 'items', 'keep', 1],
@@ -77,12 +77,18 @@ const ports: [string, string, string, number][] = [
 let root: string;
 const servers: Server[] = [];
 const urls: Record<string, string> = {};
+let off = false;
+const asked: string[] = [];
 
 async function serve(html: string): Promise<string> {
   const server = createServer((request, response) => {
     request.resume();
     const path = new URL(request.url!, 'http://localhost').pathname;
     if (path.startsWith('/api/') || path.startsWith('/rpc/')) {
+      if (off) {
+        asked.push(path);
+        return void request.socket.destroy();
+      }
       setTimeout(() => {
         if (request.method === 'POST') response.writeHead(201, { 'content-type': 'application/json' }).end('{}');
         else response.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
@@ -156,8 +162,13 @@ test('the mask pages record with their noise named, and without it record exits 
 for (const [page, bug, name, expected] of ports) {
   test(`${page} ${bug === '' ? 'without a bug' : `?${page === 'r1' ? 'bug' : 'broken'}=${bug}`} gates ${name} with exit ${expected}`, async () => {
     const query = bug === '' ? '' : `/?${page === 'r1' ? 'bug' : 'broken'}=${bug}`;
+    off = true;
     const { status, output } = await run('gate', name, '--source', name, '--url', `${urls[page]}${query}`);
+    off = false;
     assert.equal(status, expected, output);
+    assert.deepEqual(asked, [], 'the tape answers every request');
+    if (['get-none', 'get-noconfig', 'sync-none'].includes(bug)) assert.match(output, /note: step 2|note: step 3/);
+    if (['get-none', 'get-noconfig', 'sync-none'].includes(bug)) assert.match(output, /: the original sent it 1 time, the port 0 times$/m);
   });
 }
 

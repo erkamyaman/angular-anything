@@ -1,0 +1,48 @@
+[
+  {
+    "step": 3,
+    "epoch": 0,
+    "method": "POST",
+    "url": {
+      "path": [
+        "api",
+        "tasks"
+      ],
+      "query": {}
+    },
+    "body": {
+      "title": "Call mom"
+    },
+    "credentials": [],
+    "answer": {
+      "status": 201,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"title\":\"Call mom\"}"
+    }
+  },
+  {
+    "step": 6,
+    "epoch": 1,
+    "method": "POST",
+    "url": {
+      "path": [
+        "api",
+        "tasks"
+      ],
+      "query": {}
+    },
+    "body": {
+      "title": "Pay rent"
+    },
+    "credentials": [],
+    "answer": {
+      "status": 201,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"title\":\"Pay rent\"}"
+    }
+  }
+]

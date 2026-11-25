@@ -1,0 +1,23 @@
+[
+  {
+    "step": 2,
+    "epoch": 0,
+    "method": "POST",
+    "url": {
+      "path": [
+        "api",
+        "save"
+      ],
+      "query": {}
+    },
+    "body": null,
+    "credentials": [],
+    "answer": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"name\":\"draft\"}"
+    }
+  }
+]

@@ -151,7 +151,7 @@ test('12 answers one after another can be recorded, and a page that asks again a
   assert.equal(text(twelve.steps[1].observation, 'n'), '["12"]');
   const started = Date.now();
   const forever = await runCase(browser, make('/chain', click('Forever')), base);
-  assert.match(forever.error ?? '', /^step 2 \(click button "Forever"\): 1 requests in flight after 100 rounds of answers, the first: GET \/api\/n\?i=\d+$/);
+  assert.match(forever.error ?? '', /^step 2 \(click button "Forever"\): 1 requests in flight after 100 rounds of answers, the first: GET \/api\/n$/);
   assert.ok(Date.now() - started < 60_000);
 });
 

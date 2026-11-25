@@ -1524,7 +1524,6 @@
   ],
   "effects": {
     "requests": [],
-    "gets": [],
     "storage": {
       "tasks": [
         {

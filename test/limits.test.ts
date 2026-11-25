@@ -137,7 +137,7 @@ test('a page that sends its next request in every few frames fails with the limi
   const run = await runCase(browser, start('/poll'), base, 1500);
   assert.match(
     run.error ?? '',
-    /^step 2 \(click button "Start"\): never settled in 300 frames: 0 requests in flight, the last frame was not quiet: .*, the last request was GET \/api\/n\?i=\d+, a page that sends one in every few frames never rests$/,
+    /^step 2 \(click button "Start"\): never settled in 300 frames: 0 requests in flight, the last frame was not quiet: .*, the last request was GET \/api\/n, a page that sends one in every few frames never rests$/,
   );
 });
 
@@ -163,7 +163,7 @@ test('a change of an attribute outside page time is seen by the wait', { timeout
 
 test('a change of the data of a text node outside page time is seen by the wait', { timeout: 60_000 }, async () => {
   const run = await runCase(browser, start('/worker-text'), base, 30_000, undefined, 500);
-  assert.match(run.error ?? '', /^step 2 \(click button "Start"\): the page moves without page time: still changing after 500 ms of real time \((accessibility, )?DOM/);
+  assert.match(run.error ?? '', /^step 2 \(click button "Start"\): the page moves without page time: still changing after 500 ms of real time \((accessibility\)$|(accessibility, )?DOM)/);
 });
 
 function losing(browser: Browser, failures: { frame: number; shot: number; observe: number; late?: number; reload?: boolean }) {

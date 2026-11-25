@@ -1,5 +1,5 @@
 {
-  "format": "angular-anything/recording@3",
+  "format": "angular-anything/recording@4",
   "suite": "fixture",
   "case": "id-after-delete",
   "source": "react",

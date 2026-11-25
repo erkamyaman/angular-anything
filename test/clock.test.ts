@@ -382,18 +382,18 @@ const stuck = `<!doctype html>
   <h1>Stuck</h1>
   <p>
     <button type="button" id="ask">Ask</button>
+    <button type="button" id="ask-moved">Ask elsewhere</button>
     <button type="button" id="drop">Drop</button>
     <button type="button" id="poll">Poll</button>
     <button type="button" id="soon">Poll soon</button>
     <button type="button" id="spin">Spin</button>
-    <button type="button" id="freeze">Freeze</button>
     <output id="out">idle</output>
   </p>
-  <canvas id="noise" width="40" height="40"></canvas>
 </main>
 <script>
   const byId = (id) => document.getElementById(id);
   byId('ask').addEventListener('click', () => fetch('/api/never'));
+  byId('ask-moved').addEventListener('click', () => fetch('/api/moved-never'));
   byId('drop').addEventListener('click', async () => {
     const response = await fetch('/api/unread');
     byId('out').textContent = 'answered ' + response.status;
@@ -402,15 +402,6 @@ const stuck = `<!doctype html>
   byId('poll').addEventListener('click', poll);
   byId('soon').addEventListener('click', () => {
     setTimeout(poll, 32);
-  });
-  byId('freeze').addEventListener('click', () => {
-    const source = 'let n = 0; setInterval(() => postMessage(++n), 20);';
-    const paint = byId('noise').getContext('2d');
-    new Worker(URL.createObjectURL(new Blob([source]))).onmessage = ({ data }) => {
-      paint.fillStyle = 'rgb(0, ' + data + ', 0)';
-      paint.fillRect(0, 0, 40, 40);
-      while (data > 60) {}
-    };
   });
   byId('spin').addEventListener('click', () => {
     setTimeout(() => {
@@ -562,6 +553,8 @@ before(async () => {
         return;
       case '/api/nothing':
         return void response.writeHead(204).end();
+      case '/api/moved-never':
+        return void response.writeHead(302, { location: '/api/never' }).end();
       case '/api/moved':
         return void response.writeHead(302, { location: '/api/data' }).end();
       case '/dot.png?late':
@@ -747,7 +740,7 @@ test('a page that leaves by itself is followed to the page it loads', { timeout:
     const last = runs[0].steps.at(-1)!.observation;
     assert.equal(last.effects.title, 'Second', way);
     assert.equal(text(last, 'out'), shown, way);
-    assert.deepEqual([...new Set(runs[0].steps.flatMap((step) => step.observation.effects.gets.map((get) => get.path.join('/'))))], ['api/data'], way);
+    assert.deepEqual([...new Set(runs[0].steps.flatMap((step) => step.observation.effects.gets!.map((get) => get.path.join('/'))))], ['api/data'], way);
   }
 
   const again = await visit('/first', { action: 'click', target: button('Reload') });
@@ -804,8 +797,8 @@ test('a synchronous request is answered at once, while the page loads and in a c
   assert.equal(text(run.steps[0].observation, 'first'), 'loaded 7');
   assert.equal(text(run.steps[1].observation, 'again'), 'loaded 7 after a redirect');
   assert.deepEqual(
-    run.steps[1].observation.effects.gets.map((get) => get.path.join('/')).sort(),
-    ['api/data', 'api/moved'],
+    run.steps[1].observation.effects.gets!.map((get) => get.path.join('/')),
+    ['api/moved'],
   );
 });
 
@@ -836,6 +829,52 @@ test('a wait that does not end fails the step after 5000 ms and names what was w
   assert.equal(clock.error, 'step 2 (click button "Spin"): waited 5000 ms for a frame of the page clock');
 });
 
+const impatient = (browser: Browser) =>
+  ({
+    async newContext(...args: Parameters<Browser['newContext']>) {
+      const context = await browser.newContext(...args);
+      const set = context.setDefaultTimeout.bind(context);
+      context.setDefaultTimeout = () => set(2000);
+      return context;
+    },
+  }) as unknown as Browser;
+
+test('the time limit of an action does not end a request that the runner fetches', { timeout: 60_000 }, async () => {
+  const ask = (name: string) =>
+    runCase(
+      impatient(browser),
+      {
+        ...testCase,
+        id: 'patient',
+        steps: [
+          { action: 'goto', path: '/stuck' },
+          { action: 'click', target: { role: 'button', name } },
+        ],
+      },
+      base,
+    );
+  const [direct, moved] = await Promise.all([ask('Ask'), ask('Ask elsewhere')]);
+  assert.equal(direct.error, 'step 2 (click button "Ask"): 1 requests still in flight after 5000 ms, the first: GET /api/never');
+  assert.equal(
+    moved.error,
+    'step 2 (click button "Ask elsewhere"): 1 requests still in flight after 5000 ms, the first: GET /api/moved-never',
+  );
+});
+
+const hangingScreenshot = (browser: Browser) =>
+  ({
+    async newContext(...args: Parameters<Browser['newContext']>) {
+      const context = await browser.newContext(...args);
+      const newPage = context.newPage.bind(context);
+      context.newPage = async () => {
+        const page = await newPage();
+        page.screenshot = () => new Promise<Buffer>(() => {});
+        return page;
+      };
+      return context;
+    },
+  }) as unknown as Browser;
+
 test('a step has a limit in real time, and a wait is cut off with the message of that moment', { timeout: 60_000 }, async () => {
   const steps: Case['steps'] = [
     { action: 'goto', path: '/stuck' },
@@ -846,17 +885,15 @@ test('a step has a limit in real time, and a wait is cut off with the message of
     { action: 'click', target: button('Poll soon') },
     { action: 'advance', frames: 5 },
   ];
-  const frozen: Case['steps'] = [
-    { action: 'goto', path: '/stuck' },
-    { action: 'click', target: button('Freeze') },
-  ];
   const started = Date.now();
-  const [settling, advancing, shooting] = await Promise.all(
-    ([[steps, 2000], [soon, 2000], [frozen, 8000]] as const).map(([list, limit]) => runCase(browser, { ...testCase, id: 'limit', steps: list }, base, limit)),
-  );
+  const [settling, advancing, shooting] = await Promise.all([
+    runCase(browser, { ...testCase, id: 'limit', steps }, base, 2000),
+    runCase(browser, { ...testCase, id: 'limit', steps: soon }, base, 2000),
+    runCase(hangingScreenshot(browser), { ...testCase, id: 'limit', steps: steps.slice(0, 1) }, base, 8000),
+  ]);
   assert.match(settling.error ?? '', /^step 2 \(click button "Poll"\): no frame of the page in 2000 ms, the last wait was for /);
   assert.match(advancing.error ?? '', /^step 2 \(click button "Poll soon"\): no frame of the page in 2000 ms, the last wait was for /);
-  assert.match(shooting.error ?? '', /^step 2 \(click button "Freeze"\): no frame of the page in 8000 ms, the last wait was for the (screenshot|observation)$/);
+  assert.equal(shooting.error, 'step 1 (goto /stuck): no frame of the page in 8000 ms, the last wait was for the screenshot');
   assert.ok(Date.now() - started < 30_000);
 
   let waited = 'the first thing';

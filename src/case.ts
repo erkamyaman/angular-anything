@@ -1,8 +1,12 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { parseMeasured } from './layout.ts';
+import type { Measured } from './layout.ts';
 import { sha256 } from './lock.ts';
 import { parseNoise } from './noise.ts';
 import type { Noise } from './noise.ts';
+import { parseAccept } from './secrets.ts';
+import type { Accept } from './secrets.ts';
 
 export const CASE_FORMAT = 'angular-anything/case@1';
 export const FRAME_MS = 16;
@@ -24,13 +28,15 @@ export type Case = {
   viewport: { width: number; height: number };
   steps: Step[];
   noise?: Noise[];
+  measured?: Measured[];
+  accept?: Accept[];
 };
 
 export type LoadedCase = { case: Case; sha256: string };
 
 export class UsageError extends Error {}
 
-const CASE_KEYS = ['format', 'id', 'description', 'viewport', 'steps', 'noise'];
+const CASE_KEYS = ['format', 'id', 'description', 'viewport', 'steps', 'noise', 'measured', 'accept'];
 
 export const NAME = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -106,6 +112,8 @@ export function parseCase(text: string, id: string): Case {
   });
   if (data.steps[0].action !== 'goto') throw new Error('step 1 must be a "goto"');
   if ('noise' in data) parseNoise(data.noise);
+  if ('measured' in data) parseMeasured(data.measured);
+  if ('accept' in data) parseAccept(data.accept);
   return data as Case;
 }
 

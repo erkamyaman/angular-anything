@@ -197,11 +197,11 @@ test('record launches Chromium, writes a locked recording and masks the noise of
 
   const lock = JSON.parse(await readFile(recorded('lock.json'), 'utf8'));
   const files = steps.map((_, index) => `0${index + 1}.json`);
-  assert.deepEqual(Object.keys(lock.files), [...files, 'recording.json'].sort());
+  assert.deepEqual(Object.keys(lock.files), [...files, 'recording.json', 'tape.json'].sort());
   assert.match(lock.browser, /^chromium \d+\./);
 
   const recording = JSON.parse(await readFile(recorded('recording.json'), 'utf8'));
-  assert.equal(recording.format, 'angular-anything/recording@3');
+  assert.equal(recording.format, 'angular-anything/recording@4');
   assert.deepEqual(recording.screenshotNoise, []);
   assert.match(output, /noise dom html\[1\]\/body\[1\]\/main\[1\]\.attrs\.data-nonce: 8 values masked/);
   for (let step = 1; step <= steps.length; step++) {
@@ -216,7 +216,6 @@ test('record launches Chromium, writes a locked recording and masks the noise of
   assert.deepEqual(afterEnter.events, [{ name: 'saved', payload: { name: 'Ada' } }]);
   assert.deepEqual(afterEnter.effects, {
     requests: [{ method: 'POST', url: { path: ['api', 'names'], query: {} }, body: { name: 'Ada' } }],
-    gets: [],
     storage: { name: 'Ada', prefs: { name: 'Ada', order: [1, 2], $order: ['name', 'order'] } },
     url: { path: [''], query: {}, fragment: '' },
     title: 'Tiny',
@@ -276,10 +275,10 @@ test('replay refuses a recording in another format and one that masks what the c
   const recording = await readFile(file, 'utf8');
   const testCase = await readFile(caseFile, 'utf8');
   try {
-    await writeFile(file, recording.replace('recording@3', 'recording@2'));
+    await writeFile(file, recording.replace('recording@4', 'recording@3'));
     const old = await run('replay', 'tiny', '--source', 'original', '--url', port);
     assert.equal(old.status, 1, old.output);
-    assert.match(old.output, /it is in the format angular-anything\/recording@2, not angular-anything\/recording@3, so it has to be recorded again/);
+    assert.match(old.output, /it is in the format angular-anything\/recording@3, not angular-anything\/recording@4, so it has to be recorded again/);
     await writeFile(file, recording);
     await writeFile(caseFile, JSON.stringify({ ...JSON.parse(testCase), noise: undefined }));
     const masked = await run('replay', 'tiny', '--source', 'original', '--url', port);
@@ -313,7 +312,11 @@ for (const [bug, expected] of Object.entries(bugs)) {
     assert.equal(status, 1, output);
     assert.match(output, /^angular-anything gate: FAIL$/m);
     assert.deepEqual(failingLayers(output), expected.layers, output);
-    assert.ok(output.includes(expected.path), output);
+    const report = await readFile(join(root, 'reports', 'original', 'report.json'), 'utf8');
+    if (bug === 'request') {
+      assert.match(output, /the first at tape POST \/api\/names \(changed mutation\)$/m);
+      assert.ok(JSON.parse(report).cases[0].steps[2].layers.effects.first.some((difference: { path: string }) => difference.path === expected.path), report);
+    } else assert.ok(output.includes(expected.path), output);
   });
 }
 
@@ -361,7 +364,14 @@ test('replay writes the report, the summary and the screenshots that differ, and
   assert.equal(report.command, 'replay');
   assert.equal(report.result, 'fail');
   assert.deepEqual(report.cases[0].steps[2].layers.dom.first, [
-    { path: 'html[1]/body[1]/main[1]/p[1]/text()[1]', expected: 'saved Ada', actual: 'stored Ada' },
+    {
+      layer: 'dom',
+      path: 'html[1]/body[1]/main[1]/p[1]/text()[1]',
+      kind: 'text',
+      expected: 'saved Ada',
+      actual: 'stored Ada',
+      at: { offset: 1, expected: 's⟨a⟩ved Ada', actual: 's⟨t⟩ored Ada' },
+    },
   ]);
   assert.equal(report.cases[0].steps[2].screenshot, 'different');
   assert.equal(report.cases[0].steps[1].screenshot, 'identical');
