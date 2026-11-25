@@ -648,6 +648,7 @@ export async function runCase(
       log.windowsSeen++;
     });
     const session = await context.newCDPSession(page);
+    await session.send('Page.setFontFamilies', { fontFamilies: { standard: 'Times New Roman' } });
     page.on('request', (request) => {
       log.requests.push(request);
       log.lastRequest = named(request, base);

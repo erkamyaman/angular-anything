@@ -52,6 +52,7 @@ worker.onmessage = ({ data }) => { context.fillStyle = 'rgb(' + data * 10 + ', 0
 context.fillStyle = 'rgb(200, 0, 0)';
 context.fillRect(0, 0, 32, 32);`,
   ),
+  '/plain': '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Plain</title></head><body><main><p style="font-family: Times">p</p></main></body></html>',
   '/pixels': doc(
     `<canvas id="c" width="32" height="32"></canvas>`,
     `const context = document.getElementById('c').getContext('2d');
@@ -189,5 +190,14 @@ test('the screenshot of a step is the one that the page ends on, not one from th
     const run = await runCase(browser, make('/steps'), base);
     assert.equal(run.error, undefined);
     assert.ok(run.steps[0].screenshot.equals(final), `round ${round + 1}`);
+  }
+});
+
+test('the font of a page that names none is the same on every machine, also after a reload, and a named font is kept', async () => {
+  const run = await runCase(browser, make('/plain', [{ action: 'reload' }]), base);
+  assert.equal(run.error, undefined);
+  for (const step of run.steps) {
+    assert.equal(step.observation.style['html[1]'].style['font-family'], '"Times New Roman"');
+    assert.equal(step.observation.style['html[1]/body[1]/main[1]/p[1]'].style['font-family'], 'Times');
   }
 });
