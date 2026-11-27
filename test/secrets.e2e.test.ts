@@ -646,7 +646,7 @@ test('the tool writes no storage state, trace, HAR or video, and adds no package
   const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.deepEqual(Object.keys(manifest.dependencies), ['playwright']);
   assert.ok(!(await readFile(new URL('../pnpm-lock.yaml', import.meta.url), 'utf8')).includes('secretlint'));
-  const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
+  const readme = await readFile(new URL('../docs/reference.md', import.meta.url), 'utf8');
   for (const kind of ['credential', 'jwt', 'pem', 'bearer-or-basic', 'url-password', 'named-value', 'secret-field']) {
     assert.ok(readme.includes(`\`${kind}\``), kind);
   }
