@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Angular Anything">
+  <defs>
+    <linearGradient id="angular" gradientUnits="userSpaceOnUse" x1="560" y1="784" x2="720" y2="208">
+      <stop offset="0" stop-color="#e40035"/>
+      <stop offset="0.55" stop-color="#dc087d"/>
+      <stop offset="1" stop-color="#6c00f5"/>
+    </linearGradient>
+  </defs>
+  <path id="shield" fill="#f1ecfa" d="M495.92 29.72A48 48 0 0 1 528.08 29.72L953.64 181.07A48 48 0 0 1 985.18 232.29L916.25 780.14A48 48 0 0 1 889.53 817.35L532.9 989.89A48 48 0 0 1 491.1 989.89L134.47 817.35A48 48 0 0 1 107.75 780.14L38.82 232.29A48 48 0 0 1 70.36 181.07Z"/>
+  <g id="mark">
+    <path fill="url(#angular)" d="M562 208L565.67 208A40 40 0 0 1 602.41 232.18L823.18 744.93A28 28 0 0 1 797.46 784L682.43 784A28 28 0 0 1 656.71 767.07L512 430.97L367.29 767.07A28 28 0 0 1 341.57 784L314 784Z"/>
+    <path fill="#f0443e" d="M518 208L564 208L316 784L270 784Z"/>
+    <path fill="#41b883" d="M474 208L520 208L272 784L226.54 784A28 28 0 0 1 226 783.99Z"/>
+    <path fill="#61dafb" d="M421.59 232.18A40 40 0 0 1 458.33 208L476 208L228 784L226.54 784A28 28 0 0 1 200.82 744.93L421.59 232.18Z"/>
+  </g>
+</svg>

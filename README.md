@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.svg" width="140" height="140" alt="The Angular Anything logo">
+</p>
+
 <h1 align="center">Angular Anything</h1>
 
 <p align="center">
@@ -99,7 +103,7 @@ pnpm aa gate fixture --source react --url 'http://localhost:4104/?bug=aria'    #
 
 1. **Find the cases.** Your agent reads the app and writes down what users do, as short [cases](https://github.com/erkamyaman/angular-anything/blob/main/cases/fixture/add-task/case.json). You can add your own.
 2. **Record** the original (React, Vue or AngularJS). `record` runs each case twice and locks what happened.
-3. **Port.** Your agent rewrites the app in Angular (or you do). The tool checks the work, it does not write it.
+3. **Port.** Your agent rewrites the app in Angular.
 4. **Gate** the port. It replays every case and fails on any difference.
 
 **What is compared.** After each step: the accessibility tree, the DOM, computed styles, events, requests that change data, `localStorage`, the URL, the title, focus, dialogs and windows. Sizes and positions are compared when the original runs alongside. Screenshots are reported and never fail the gate.
