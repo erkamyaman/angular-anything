@@ -5,6 +5,9 @@
 <h1 align="center">Angular Anything</h1>
 
 <p align="center">
+<a href="https://www.npmjs.com/package/angular-anything"><img src="https://img.shields.io/npm/v/angular-anything?style=flat&colorA=111111&colorB=c3002f&label=npm" alt="npm version"></a>
+<a href="https://www.npmjs.com/package/angular-anything"><img src="https://img.shields.io/npm/d18m/angular-anything?style=flat&colorA=111111&colorB=c3002f&label=npm%20downloads" alt="npm downloads"></a>
+<a href="https://github.com/erkamyaman/angular-anything/stargazers"><img src="https://img.shields.io/github/stars/erkamyaman/angular-anything?style=flat&colorA=111111&colorB=c3002f&label=stars" alt="GitHub stars"></a>
 <a href="https://github.com/erkamyaman/angular-anything/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-111111?style=flat&colorA=111111&colorB=c3002f" alt="MIT license"></a>
 <img src="https://img.shields.io/badge/status-early-111111?style=flat&colorA=111111&colorB=c3002f" alt="Status: early">
 <img src="https://img.shields.io/badge/Angular-22-111111?style=flat&colorA=111111&colorB=c3002f" alt="Angular 22">
@@ -15,7 +18,7 @@ Move your app or library to Angular with agents, and prove it still behaves the 
 </p>
 
 <p align="center">
-<b>Documentation:</b> <a href="https://github.com/erkamyaman/angular-anything/blob/main/docs/reference.md">reference</a>
+<b>Documentation:</b> <a href="https://github.com/erkamyaman/angular-anything/blob/main/docs/reference.md">reference</a> · <b>npm:</b> <a href="https://www.npmjs.com/package/angular-anything">angular-anything</a>
 </p>
 
 ## Sponsors
@@ -71,9 +74,6 @@ Paste this into your coding agent:
 Read https://raw.githubusercontent.com/erkamyaman/angular-anything/main/llms.txt, install Angular Anything, record this app, port it to Angular, and keep fixing the port until the gate passes.
 ```
 
-> [!TIP]
-> **Agents:** read [llms.txt](https://github.com/erkamyaman/angular-anything/blob/main/llms.txt) for the install steps, every command and the porting workflow.
-
 Or install it yourself (Node 24 or newer):
 
 ```sh
@@ -81,23 +81,10 @@ npm install -g angular-anything
 angular-anything doctor   # prints the command that installs Chromium if it is missing
 ```
 
-To try it on the sample apps, run it from a clone (needs pnpm):
+> [!TIP]
+> **Agents:** read [llms.txt](https://github.com/erkamyaman/angular-anything/blob/main/llms.txt) for the install steps, every command and the porting workflow.
 
-```sh
-git clone https://github.com/erkamyaman/angular-anything
-cd angular-anything
-pnpm install
-pnpm exec playwright install chromium
-pnpm fixtures:build
-pnpm fixtures:serve
-```
-
-In a second terminal, check the Angular port of the sample app against the recording of its React original:
-
-```sh
-pnpm aa gate fixture --source react --url http://localhost:4104                # passes
-pnpm aa gate fixture --source react --url 'http://localhost:4104/?bug=aria'    # a seeded bug, fails
-```
+Want to see it fail and pass first? The [sample apps](https://github.com/erkamyaman/angular-anything/blob/main/docs/reference.md#commands) run from a clone.
 
 ## How it works
 
