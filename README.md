@@ -21,6 +21,8 @@ Move your app or library to Angular with agents, and prove it still behaves the 
 <b>Documentation:</b> <a href="https://github.com/erkamyaman/angular-anything/blob/main/docs/reference.md">reference</a> · <b>npm:</b> <a href="https://www.npmjs.com/package/angular-anything">angular-anything</a>
 </p>
 
+<p align="center">Moving an app to modern Angular? I offer consulting for Angular migrations: <a href="mailto:erkamyaman35@gmail.com">erkamyaman35@gmail.com</a></p>
+
 ## Sponsors
 
 <p align="center">
