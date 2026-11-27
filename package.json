@@ -2,7 +2,7 @@
   "name": "angular-anything",
   "version": "0.0.0",
   "private": true,
-  "description": "Replays every recorded interaction of the original against the port.",
+  "description": "Move your app or library to Angular with agents, and prove it still behaves the same.",
   "license": "MIT",
   "repository": {
     "type": "git",

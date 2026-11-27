@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-Move your app or library to Angular, and prove it still behaves the same.
+Move your app or library to Angular with agents, and prove it still behaves the same.
 </p>
 
 <p align="center">

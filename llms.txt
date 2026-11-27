@@ -1,6 +1,6 @@
 # Angular Anything
 
-> Move a React, Vue or AngularJS app or library to modern Angular, and prove it still behaves the same. The tool records the original in Chromium and fails the Angular port on any difference it compares. It does not write the port: your agent does.
+> Move a React, Vue or AngularJS app or library to modern Angular with agents, and prove it still behaves the same. The tool records the original in Chromium and fails the Angular port on any difference it compares. It does not write the port: your agent does.
 
 Status: early. Not on npm. Tested on macOS only. Read https://github.com/erkamyaman/angular-anything/blob/main/docs/reference.md before relying on it.
 
