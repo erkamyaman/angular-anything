@@ -1,12 +1,14 @@
 import type { Entry } from './noise.ts';
+import { isNumberNode } from './parts.ts';
 import type { Body, UrlParts } from './parts.ts';
+import { parsePath } from './path.ts';
 import { isPlaceholder, kindOf, maskable, nodesOf, placeholder, walkLayer } from './value.ts';
 
 export type Asked = { method: string; url: UrlParts; body: Body; credentials: string[] };
 export type Answer = { status: number; headers: Record<string, string>; body: string; base64?: true };
 export type TapeEntry = Asked & { step: number; epoch: number; answer: Answer | null };
 export type Taken = Asked & { step: number };
-export type Finding = { step: number; request: string; expected: unknown; actual: unknown; differs?: string[] };
+export type Finding = { step: number; request: string; expected: unknown; actual: unknown; differs?: string[]; absent?: true };
 
 export const CREDENTIAL_HEADERS = ['authorization', 'x-xsrf-token', 'x-csrf-token'];
 export const ANSWER_HEADERS = ['content-type', 'location'];
@@ -18,15 +20,77 @@ const wrapped = ({ method, url, body }: Asked) =>
     ? { effects: { requests: [structuredClone({ method, url, body })] } }
     : { effects: { gets: [structuredClone(url)] } };
 
+function masking<T extends Asked>(request: T, hidden: (path: string) => boolean): T {
+  const probe = wrapped(request);
+  walkLayer('effects', probe, (path, value, set) => {
+    if (maskable(kindOf(value)) && hidden(path)) set(placeholder(kindOf(value)));
+  });
+  return unwrapped(request, probe);
+}
+
+const unwrapped = <T extends Asked>(request: T, { effects }: ReturnType<typeof wrapped>): T =>
+  'requests' in effects ? { ...request, ...effects.requests![0] } : { ...request, url: effects.gets![0] };
+
 export function maskRequest<T extends Asked>(request: T, noise: Entry[]): T {
   const relaxed = noise.filter((entry) => entry.layer === 'effects');
   if (relaxed.length === 0) return request;
-  const probe = wrapped(request);
-  walkLayer('effects', probe, (path, value, set) => {
-    if (maskable(kindOf(value)) && relaxed.some((entry) => entry.matcher.matches(path, true))) set(placeholder(kindOf(value)));
+  return masking(request, (path) => relaxed.some((entry) => entry.matcher.matches(path, true)));
+}
+
+const masks = (entry: Asked): Set<string> =>
+  new Set([...nodesOf('effects', wrapped(entry))].filter(([, value]) => isPlaceholder(value)).map(([path]) => path));
+
+const maskedAs = <T extends Asked>(request: T, entry: Asked): T => {
+  const hidden = masks(entry);
+  return hidden.size === 0 ? request : masking(request, (path) => hidden.has(path));
+};
+
+const fits = (request: Asked, entry: Asked): boolean => requestKey(maskedAs(request, entry)) === requestKey(entry);
+
+export type Withheld = (text: string, names: string[]) => boolean;
+
+export function agreedTape(tape: TapeEntry[], again: Taken[], noise: Entry[], withheld: Withheld): TapeEntry[] {
+  const keyed = again.map((request) => ({ request, loose: requestKey(request, noise), exact: requestKey(request) }));
+  const partners = new Map<TapeEntry, (typeof keyed)[number]>();
+  const used = new Set<(typeof keyed)[number]>();
+  for (const entry of tape) {
+    const exact = requestKey(entry);
+    const same = keyed.find((each) => !used.has(each) && each.request.step === entry.step && each.exact === exact);
+    if (!same) continue;
+    partners.set(entry, same);
+    used.add(same);
+  }
+  for (const entry of tape) {
+    if (partners.has(entry)) continue;
+    const loose = requestKey(entry, noise);
+    const rank = (each: (typeof keyed)[number]) => [
+      Number(used.has(each)),
+      Number(each.request.step !== entry.step),
+      differing(entry, each.request).length,
+    ];
+    const [nearest] = keyed
+      .filter((each) => each.loose === loose)
+      .map((each) => ({ each, rank: rank(each) }))
+      .sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.rank[2] - b.rank[2]);
+    if (!nearest) continue;
+    partners.set(entry, nearest.each);
+    used.add(nearest.each);
+  }
+  return tape.map((entry) => {
+    const masked = maskRequest(entry, noise);
+    const partner = partners.get(entry);
+    if (!partner || masked === entry) return masked;
+    const [first, second] = [entry, partner.request].map((each) => nodesOf('effects', wrapped(each)));
+    const probe = wrapped(masked);
+    walkLayer('effects', probe, (path, value, set) => {
+      const was = first.get(path);
+      if (!isPlaceholder(value) || JSON.stringify(was) !== JSON.stringify(second.get(path))) return;
+      const names = parsePath(path).flatMap((token) => (typeof token === 'object' && 'key' in token ? [token.key] : []));
+      const text = isNumberNode(was) ? was.source.replace(/e(\d+)$/, (_, zeros: string) => '0'.repeat(Number(zeros))) : String(was);
+      if (!withheld(text, names)) set(was);
+    });
+    return unwrapped(masked, probe);
   });
-  const { effects } = probe;
-  return 'requests' in effects ? { ...request, ...effects.requests![0] } : { ...request, url: effects.gets![0] };
 }
 
 export function maskedOutside(tape: TapeEntry[], noise: Entry[]): string[] {
@@ -70,24 +134,30 @@ function differing(left: Asked, right: Asked): string[] {
 
 const closest = (request: Asked, candidates: TapeEntry[]): TapeEntry | undefined =>
   candidates
-    .map((entry) => ({ entry, count: differing(entry, request).length }))
+    .map((entry) => ({ entry, count: differing(entry, maskedAs(request, entry)).length }))
     .sort((a, b) => a.count - b.count)[0]?.entry;
 
-const samePath = (a: Asked, b: Asked, noise: Entry[]) => {
-  const path = (request: Asked) => {
-    const { url } = maskRequest(request, noise);
-    return JSON.stringify([request.method, url.origin, url.path]);
-  };
+const samePath = (a: Asked, b: Asked) => {
+  const path = ({ method, url }: Asked) => JSON.stringify([method, url.origin, url.path]);
   return path(a) === path(b);
 };
 
 const times = (count: number) => `${count} time${count === 1 ? '' : 's'}`;
 const ABSENT = 'the tape does not hold it, so it was aborted';
 
-export type Player = { findings: Finding[]; taken: Taken[]; take(request: Asked, step: number, epoch: number): TapeEntry | undefined };
+export type Player = {
+  findings: Finding[];
+  taken: Taken[];
+  take(request: Asked, step: number, epoch: number): TapeEntry | undefined;
+  unsent(steps: number): Finding[];
+};
 
-export function player(tape: TapeEntry[], noise: Entry[] = [], second = false): Player {
-  const keyed = tape.map((entry) => ({ entry, key: requestKey(entry, noise) }));
+export function player(tape: TapeEntry[], second = false): Player {
+  const loose = new Map(tape.map((entry) => [entry, masks(entry).size]));
+  const closestFits = (matches: TapeEntry[]) => {
+    const fewest = Math.min(...matches.map((entry) => loose.get(entry)!));
+    return matches.filter((entry) => loose.get(entry) === fewest);
+  };
   const counts = new Map<string, number>();
   const used = new Set<TapeEntry>();
   const findings: Finding[] = [];
@@ -99,14 +169,15 @@ export function player(tape: TapeEntry[], noise: Entry[] = [], second = false): 
     return seen;
   };
 
-  function read(request: Asked, step: number, epoch: number, key: string, matches: TapeEntry[]): TapeEntry | undefined {
+  function read(request: Asked, step: number, epoch: number, matches: TapeEntry[]): TapeEntry | undefined {
     const finding = { step, request: describeRequest(request) };
     if (matches.length === 0) {
       const near = closest(request, tape.filter((entry) => entry.method === request.method));
-      findings.push({ ...finding, expected: 'a request that the tape holds', actual: ABSENT, differs: near ? differing(near, request) : [] });
+      const differs = near ? differing(near, maskedAs(request, near)) : [];
+      findings.push({ ...finding, expected: 'a request that the tape holds', actual: ABSENT, differs });
       return second ? near : undefined;
     }
-    const inEpoch = matches.filter((entry) => entry.epoch === epoch);
+    const inEpoch = closestFits(matches.filter((entry) => entry.epoch === epoch));
     if (inEpoch.length === 0) {
       findings.push({
         ...finding,
@@ -122,32 +193,32 @@ export function player(tape: TapeEntry[], noise: Entry[] = [], second = false): 
       return matches.find((entry) => entry.epoch === next);
     }
     const inStep = inEpoch.filter((entry) => entry.step === step);
-    if (inStep.length > 0) return inStep[Math.min(count(`${epoch} ${step} ${key}`), inStep.length - 1)];
+    const id = `${step} ${inStep.map((entry) => tape.indexOf(entry))}`;
+    if (inStep.length > 0) return inStep[Math.min(count(id), inStep.length - 1)];
     return inEpoch.filter((entry) => entry.step < step).at(-1) ?? inEpoch[0];
   }
 
-  function mutation(request: Asked, step: number, key: string, matches: TapeEntry[]): TapeEntry | undefined {
+  function mutation(request: Asked, step: number, matches: TapeEntry[]): TapeEntry | undefined {
     const name = describeRequest(request);
     if (matches.length > 0) {
-      const found = matches[count(key)];
+      const found = [...matches].sort((a, b) => loose.get(a)! - loose.get(b)!).find((entry) => !used.has(entry));
       if (!found) {
         findings.push({ step, request: name, expected: `sent ${times(matches.length)}`, actual: 'sent once more, so it was aborted', differs: [] });
       }
       return found;
     }
-    const masked = maskRequest(request, noise);
-    const near = tape.find((entry) => isMutation(entry.method) && !used.has(entry) && samePath(entry, request, noise));
+    const near = tape.find((entry) => isMutation(entry.method) && !used.has(entry) && samePath(entry, maskedAs(request, entry)));
     if (!near) {
       findings.push({ step, request: name, expected: 'a request that the tape holds', actual: ABSENT, differs: [] });
       return undefined;
     }
-    const recorded = maskRequest(near, noise);
+    const sent = maskedAs(request, near);
     findings.push({
       step,
       request: `${name} (changed mutation)`,
-      expected: { url: recorded.url, body: recorded.body },
-      actual: { url: masked.url, body: masked.body },
-      differs: differing(recorded, masked),
+      expected: { url: near.url, body: near.body },
+      actual: { url: sent.url, body: sent.body },
+      differs: differing(near, sent),
     });
     return near;
   }
@@ -155,13 +226,22 @@ export function player(tape: TapeEntry[], noise: Entry[] = [], second = false): 
   return {
     findings,
     taken,
+    unsent(steps) {
+      return tape
+        .filter((entry) => isMutation(entry.method) && entry.step <= steps && !used.has(entry))
+        .map((entry) => ({
+          step: entry.step,
+          request: describeRequest(entry),
+          expected: 'sent in this step',
+          actual: 'the page did not send it, or cancelled it before it was let go',
+          differs: [],
+          absent: true,
+        }));
+    },
     take(request, step, epoch) {
       taken.push({ ...request, step });
-      const key = requestKey(request, noise);
-      const matches = keyed.filter((item) => item.key === key).map((item) => item.entry);
-      const found = isMutation(request.method)
-        ? mutation(request, step, key, matches)
-        : read(request, step, epoch, key, matches);
+      const matches = tape.filter((entry) => fits(request, entry));
+      const found = isMutation(request.method) ? mutation(request, step, matches) : read(request, step, epoch, matches);
       if (!found) return undefined;
       used.add(found);
       for (const header of CREDENTIAL_HEADERS) {

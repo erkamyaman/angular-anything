@@ -1,4 +1,5 @@
-import type { Browser, CDPSession, Locator, Page, Request, Response, Route } from 'playwright';
+import { chromium } from 'playwright';
+import type { Browser, BrowserContext, CDPSession, Locator, Page, Request, Response, Route } from 'playwright';
 import { describeStep, describeTarget, FRAME_MS } from './case.ts';
 import type { Case, Step, Target } from './case.ts';
 import { LAYERS, LAYER_NAMES } from './compare.ts';
@@ -6,6 +7,7 @@ import type { Observation, Popup } from './compare.ts';
 import {
   adoptPage,
   beginStep,
+  blockSharedWorker,
   browserFrame,
   capturePage,
   clampIntervals,
@@ -13,13 +15,15 @@ import {
   initPage,
   probePage,
   restPage,
+  SHARED_MARK,
   trackTimers,
+  typedIntoSecretField,
   typesIntoSecretField,
+  watchTyping,
 } from './page.ts';
 import type { Due, Unread } from './page.ts';
 import { bodyParts, storageValue, urlParts } from './parts.ts';
 import type { UrlParts } from './parts.ts';
-import { compile } from './noise.ts';
 import { sendOrder } from './order.ts';
 import type { SendOrder } from './order.ts';
 import { addCredential, addRequest, addSetCookie } from './secrets.ts';
@@ -44,6 +48,8 @@ const WAIT_TIMEOUT_MS = 5000;
 const WINDOW_WAIT_MS = 200;
 const ACTION_TIMEOUT_MS = 5000;
 const SETTLE_TIMEOUT_MS = 30_000;
+
+export const launchBrowser = () => chromium.launch({ args: ['--disable-shared-workers'] });
 
 export type StepRun = { observation: Observation; unread: Unread; secretFields: string[]; screenshot: Buffer; settleMs: number; captures: number; frames: number };
 
@@ -114,9 +120,16 @@ const encoded = (body: Buffer): Pick<Answer, 'body' | 'base64'> => {
   return Buffer.from(text, 'utf8').equals(body) ? { body: text } : { body: body.toString('base64'), base64: true };
 };
 
+const workerName = (href: string, base: URL): string => {
+  const url = URL.parse(href);
+  if (!url) return 'with an address that cannot be read';
+  if (!/^https?:$/.test(url.protocol)) return url.protocol;
+  return `${url.origin === base.origin ? '' : url.origin}${url.pathname}`;
+};
+
 const local = (href: string, base: URL): string => {
   const url = new URL(href);
-  return url.origin === base.origin ? url.pathname + url.search : url.href;
+  return url.origin === base.origin ? url.pathname : url.origin + url.pathname;
 };
 
 export function within<T>(work: Promise<T>, late: () => string, ms: number): Promise<T> {
@@ -440,10 +453,12 @@ export async function closeWindows(log: Log, arriveMs = WINDOW_WAIT_MS, closeMs 
   await within(Promise.all(windows.map((window) => window.close().catch(() => {}))), () => `waited ${closeMs} ms to close a window`, closeMs);
 }
 
-const named = (request: Request, base: URL) => {
-  const url = new URL(request.url());
-  return `${request.method()} ${url.origin === base.origin ? '' : url.origin}${url.pathname}`;
+const spelled = (method: string, href: string, base: URL) => {
+  const url = new URL(href);
+  return `${method} ${url.origin === base.origin ? '' : url.origin}${url.pathname}`;
 };
+
+const named = (request: Request, base: URL) => spelled(request.method(), request.url(), base);
 
 export async function idle(log: Log, base: URL, waitMs = WAIT_TIMEOUT_MS): Promise<void> {
   if (!log.window || ![...log.window.members].some((request) => log.inFlight.has(request))) {
@@ -571,23 +586,7 @@ function answered(response: Response | null): void {
   if (response && response.status() >= 400) throw new Error(`the page answered ${`${response.status()} ${response.statusText()}`.trim()}`);
 }
 
-async function act(page: Page, step: Step, base: URL, guarded: boolean): Promise<string | undefined> {
-  switch (step.action) {
-    case 'goto':
-      answered(await page.goto(gotoUrl(step.path, base)));
-      return;
-    case 'reload':
-      answered(await page.reload());
-      return;
-    case 'advance':
-      return;
-  }
-  const target = await locate(page, step.target, 'the target');
-  if (guarded && (step.action === 'fill' || step.action === 'press')) {
-    if (await target.evaluate(typesIntoSecretField, step.action === 'press')) {
-      return `the case types into a password, one-time code or card field: ${describeTarget(step.target)}`;
-    }
-  }
+async function perform(target: Locator, step: Extract<Step, { target: Target }>): Promise<void> {
   switch (step.action) {
     case 'click':
       await target.click();
@@ -611,6 +610,31 @@ async function act(page: Page, step: Step, base: URL, guarded: boolean): Promise
       await target.press(step.key);
       break;
   }
+}
+
+async function act(page: Page, step: Step, base: URL, guarded: boolean): Promise<string | undefined> {
+  switch (step.action) {
+    case 'goto':
+      answered(await page.goto(gotoUrl(step.path, base)));
+      return;
+    case 'reload':
+      answered(await page.reload());
+      return;
+    case 'advance':
+      return;
+  }
+  const target = await locate(page, step.target, 'the target');
+  if (!guarded || (step.action !== 'fill' && step.action !== 'press')) return void (await perform(target, step));
+  const refusal = `the case types into a password, one-time code or card field: ${describeTarget(step.target)}`;
+  if (await target.evaluate(typesIntoSecretField, step.action === 'press')) return refusal;
+  await page.evaluate(watchTyping);
+  const failure = await perform(target, step).then(
+    () => undefined,
+    (error: Error) => error,
+  );
+  const typed = await within(page.evaluate(typedIntoSecretField), () => 'the typed field', WAIT_TIMEOUT_MS).catch(() => false);
+  if (typed) return refusal;
+  if (failure) throw failure;
 }
 
 export async function runCase(
@@ -651,14 +675,48 @@ export async function runCase(
     observations: 0,
   };
   const steps: StepRun[] = [];
-  const play = replayed && player(replayed.entries, compile(testCase.noise ?? []), replayed.second);
+  const play = replayed && player(replayed.entries, replayed.second);
   const slots: (Omit<TapeEntry, 'answer'> & { answer?: TapeEntry['answer'] })[] = [];
   const refusals: string[] = [];
-  const sockets: Finding[] = [];
+  const outside: Finding[] = [];
   const sentIn = new WeakMap<Request, number>();
   let epoch = 0;
   let closed = false;
   const heard: Promise<void>[] = [];
+  const workers = new Set<string>();
+  const usesWorker = (id: string, href: string) => {
+    if (workers.has(id)) return;
+    workers.add(id);
+    const name = workerName(href, base);
+    const step = steps.length + 1;
+    if (play) {
+      const expected = 'no SharedWorker';
+      outside.push({ step, request: `SharedWorker ${name}`, expected, actual: 'the page started a SharedWorker', differs: [] });
+    } else {
+      refusals.push(`step ${step}, the page uses a SharedWorker: ${name}`);
+    }
+  };
+  const marked = async (context: BrowserContext) => {
+    const marks = (await context.cookies()).filter((cookie) => cookie.name.startsWith(SHARED_MARK));
+    for (const { name, value } of marks) usesWorker(name.slice(SHARED_MARK.length), decodeURIComponent(value));
+  };
+  const websocket = (href: string) => {
+    const url = new URL(href);
+    const name = `WebSocket ${url.protocol}//${url.host}${url.pathname}`;
+    const step = steps.length + 1;
+    if (play) outside.push({ step, request: name, expected: 'no WebSocket', actual: 'the page opened a WebSocket', differs: [] });
+    else refusals.push(`step ${step}, the page opens a WebSocket: ${name.slice('WebSocket '.length)}`);
+  };
+  const bypassed = (method: string, href: string) => {
+    const name = spelled(method, href, base);
+    const step = steps.length + 1;
+    if (play) {
+      const expected = 'no request past the tape';
+      outside.push({ step, request: name, expected, actual: 'the page sent it past the tape, so it was aborted', differs: [] });
+    } else {
+      refusals.push(`step ${step}, the page sends a request past the tape: ${name}`);
+    }
+  };
   const jar = async () => {
     if (!secrets) return;
     for (const { value } of await context.cookies()) addCredential(secrets, 'cookie', value);
@@ -667,7 +725,7 @@ export async function runCase(
     steps,
     ...(error === undefined ? {} : { error }),
     tape: slots.filter((slot): slot is TapeEntry => slot.answer !== undefined),
-    findings: [...(play?.findings ?? []), ...sockets],
+    findings: [...(play?.findings ?? []), ...(play?.unsent(steps.length) ?? []), ...outside],
     refusals,
     taken: play?.taken ?? [],
   });
@@ -705,7 +763,7 @@ export async function runCase(
       if (sent) secrets?.bodies.set(slot, sent);
       return slot.answer;
     } catch {
-      if (!closed) slot.answer = null;
+      slot.answer = null;
       return null;
     }
   };
@@ -717,12 +775,9 @@ export async function runCase(
       await route.abort('failed').catch(() => {});
       return;
     }
-    const mutated = isMutation(wanted.method) ? 1 : 0;
-    epoch += mutated;
+    if (isMutation(wanted.method) && request.failure() === null) epoch++;
     const { status, headers, body, base64 } = found;
-    await route.fulfill({ status, headers, body: Buffer.from(body, base64 ? 'base64' : 'utf8') }).catch(() => {
-      epoch -= mutated;
-    });
+    await route.fulfill({ status, headers, body: Buffer.from(body, base64 ? 'base64' : 'utf8') }).catch(() => {});
   };
   try {
     context.setDefaultTimeout(ACTION_TIMEOUT_MS);
@@ -739,6 +794,9 @@ export async function runCase(
       if (waiting) log.synchronous.add(request);
       else log.synchronous.delete(request);
     });
+    await context.exposeBinding('__aaShared', (_source, id: string, href: string) => usesWorker(id, href));
+    await context.routeWebSocket(() => true, (socket) => websocket(socket.url()));
+    await context.addInitScript(blockSharedWorker, SHARED_MARK);
     await context.addInitScript(initPage);
     await context.clock.pauseAt(CLOCK_START);
     await context.addInitScript(clampIntervals);
@@ -773,18 +831,24 @@ export async function runCase(
     const page = await context.newPage();
     main = page;
     context.on('page', (opened) => {
+      opened.on('websocket', (socket) => websocket(socket.url()));
       log.windows.push(opened);
       log.windowsSeen++;
     });
     const session = await context.newCDPSession(page);
     await session.send('Page.setFontFamilies', { fontFamilies: { standard: 'Times New Roman' } });
     log.order = await sendOrder(session);
-    page.on('websocket', (socket) => {
-      const url = new URL(socket.url());
-      const name = `WebSocket ${url.protocol}//${url.host}${url.pathname}`;
-      const step = steps.length + 1;
-      if (play) sockets.push({ step, request: name, expected: 'no WebSocket', actual: 'the page opened a WebSocket', differs: [] });
-      else refusals.push(`step ${step}, the page opens a WebSocket: ${name.slice('WebSocket '.length)}`);
+    page.on('websocket', (socket) => websocket(socket.url()));
+    session.on('Fetch.requestPaused', ({ requestId, networkId, request }) => {
+      const past = networkId === undefined;
+      if (past) bypassed(request.method, request.url);
+      const done = past
+        ? session.send('Fetch.failRequest', { requestId, errorReason: 'Failed' })
+        : session.send('Fetch.continueRequest', { requestId });
+      done.catch(() => {});
+    });
+    await session.send('Fetch.enable', {
+      patterns: (['XHR', 'Ping'] as const).map((resourceType) => ({ resourceType })),
     });
     page.on('request', (request) => {
       sentIn.set(request, steps.length + 1);
@@ -904,6 +968,7 @@ export async function runCase(
         log.popups.splice(0, shot.looked.seen.popups);
         log.requests.splice(0, shot.looked.seen.requests);
         await closeWindows(log);
+        await marked(context);
         await jar();
         steps.push({
           observation: shot.looked.observation,
@@ -915,7 +980,11 @@ export async function runCase(
           frames: settled.frames,
         });
       } catch (error) {
-        const message = (error as Error).message.split('\n')[0];
+        await marked(context).catch(() => {});
+        const message = (error as Error).message
+          .split('\n')[0]
+          .replace(/Unknown key: .*/, 'Unknown key')
+          .replace(/\b(https?:\/\/[^\s"'?]*)\?[^\s"']*/g, '$1');
         const leaving =
           log.navigation && !message.includes('navigation')
             ? `, the navigation to ${local(log.navigation.url(), base)} had not loaded`

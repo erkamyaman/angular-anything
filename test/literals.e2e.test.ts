@@ -107,6 +107,8 @@ test('both source folders are given or neither, only to gate, and they have to e
     [['--port-source', 'honest'], 'give both --original-source and --port-source, or neither'],
     [[...sources('nowhere')], '--port-source'],
     [[...sources('honest'), '--port-source', 'few'], '--port-source is given twice'],
+    [[...sources('honest'), '--original-source', 'few'], '--original-source is given twice'],
+    [['--original-source', '.', '--port-source', 'honest'], '--original-source'],
   ] as const) {
     const result = await gate(...args);
     assert.equal(result.status, 2, result.output);

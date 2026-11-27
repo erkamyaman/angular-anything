@@ -97,7 +97,7 @@ export type CaseReport = {
   lock?: string[];
   error?: string;
   credentials?: string[];
-  drift?: { original: DriftState; port: DriftState };
+  drift?: { original: DriftState; port: DriftState; sizes?: 'differ' };
 };
 
 export type Report = {
@@ -218,14 +218,19 @@ function grouped({ cases, differences }: Distinct): string[] {
 function verdict({ cases, result }: Report): string[] {
   if (result === 'pass') return [`no drift: the original and the port match the recording in all ${count(cases.length, 'case')}`];
   const lines: string[] = [];
-  const say = (words: string, test: (item: CaseReport) => boolean) => {
+  const say = (words: string, test: (item: CaseReport) => boolean, then = '') => {
     const ids = cases.filter(test).map((item) => item.id);
-    if (ids.length > 0) lines.push(`${words} ${ids.join(', ')} (${ids.length} of ${count(cases.length, 'case')})`);
+    if (ids.length > 0) lines.push(`${words} ${ids.join(', ')} (${ids.length} of ${count(cases.length, 'case')})${then}`);
   };
   say('the original changed:', (item) => item.drift?.original === 'differs');
   say('the port regressed:', (item) => item.drift?.port === 'differs');
   const both = cases.filter((item) => item.drift?.original === 'differs' && item.drift.port === 'differs').map((item) => item.id);
   if (both.length > 0) lines.push(`both differ in ${both.join(', ')}: record again, then gate the port against the new recording`);
+  say(
+    'sizes or positions differ between the original and the port in',
+    (item) => item.drift?.sizes === 'differ',
+    ': the recording holds none, so which side moved is not known',
+  );
   say('not checked: the recording of', (item) => !item.drift);
   say('not checked: the original in', (item) => item.drift?.original === 'not checked');
   say('not checked: the port in', (item) => item.drift?.port === 'not checked');

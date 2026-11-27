@@ -1,6 +1,5 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { chromium } from 'playwright';
 import { describeStep, loadSuite } from './case.ts';
 import { compareCase, LAYERS, LAYER_NAMES } from './compare.ts';
 import type { Layer, LayerResult } from './compare.ts';
@@ -15,11 +14,25 @@ import { RECORDING_FILE, RECORDING_FORMAT, stepFile, TAPE_FILE, toJson, versions
 import type { Options, Recording } from './record.ts';
 import { distinct, finish, locate, REPORT_FORMAT, stepReport, summarize } from './report.ts';
 import type { CaseReport, DriftState, Found, Report, StepReport } from './report.ts';
-import { runCase } from './run.ts';
+import { launchBrowser, runCase } from './run.ts';
 import { maskedOutside, readNotes } from './tape.ts';
 import type { TapeEntry } from './tape.ts';
+import { hider, hideReport } from './typed.ts';
+import { isObject } from './value.ts';
 
-const UNREACHABLE = /net::ERR_(CONNECTION_|NAME_NOT_RESOLVED|ADDRESS_|EMPTY_RESPONSE|TIMED_OUT)/;
+const UNREACHABLE = /net::ERR_(CONNECTION_|NAME_NOT_RESOLVED|ADDRESS_|TIMED_OUT)/;
+
+export const unreachable = (error: string | undefined): boolean => error !== undefined && UNREACHABLE.test(error);
+
+const differing = (results: Record<Layer, LayerResult>[]) =>
+  results.some((layers) => LAYERS.some((layer) => layers[layer].differences.length > 0));
+
+const answers = ({ answer }: TapeEntry) =>
+  answer === null ||
+  (typeof answer?.body === 'string' &&
+    Number.isInteger(answer.status) &&
+    isObject(answer.headers) &&
+    Object.values(answer.headers).every((header) => typeof header === 'string'));
 
 function firstDifference(results: Record<Layer, LayerResult>[]): string | undefined {
   for (const [index, layers] of results.entries()) {
@@ -40,13 +53,13 @@ export async function replay(options: Replaying): Promise<number> {
   const literals =
     sources &&
     (await checkLiterals({
-      recorded: join(root, 'recordings', source),
+      recordings: join(root, 'recordings'),
       ids: cases.map((loaded) => loaded.case.id),
       source,
       originalSource: resolve(root, sources.originalSource),
       portSource: resolve(root, sources.portSource),
     }));
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   try {
     const pins = versions(browser);
     const report: Report = {
@@ -54,8 +67,8 @@ export async function replay(options: Replaying): Promise<number> {
       command: drift ? 'drift' : gate ? 'gate' : 'replay',
       suite,
       source,
-      url: url.href,
-      original: original?.href ?? null,
+      url: `${url.origin}/`,
+      original: original ? `${original.origin}/` : null,
       ...pins,
       result: 'fail',
       cases: [],
@@ -113,6 +126,7 @@ export async function replay(options: Replaying): Promise<number> {
         }
         const tape: TapeEntry[] = JSON.parse(await readFile(join(recorded, TAPE_FILE), 'utf8'));
         if (!Array.isArray(tape)) throw new Error('its tape is not a list, so it has to be recorded again');
+        if (!tape.every(answers)) throw new Error('its tape holds an answer that is not one, so it has to be recorded again');
         const [unnamed] = maskedOutside(tape, noise);
         if (unnamed !== undefined) {
           throw new Error(`it masks values that the case does not name as noise (tape: ${unnamed}), so it has to be recorded again`);
@@ -120,6 +134,7 @@ export async function replay(options: Replaying): Promise<number> {
         item.credentials = [...new Set(tape.flatMap((entry) => entry.credentials))];
         let again: Awaited<ReturnType<typeof runCase>> | undefined;
         let mismatch: string | undefined;
+        let departed: string | undefined;
         const measuredRun = async (address: URL) => {
           const done = await runCase(browser, testCase, address, undefined, frames, undefined, { entries: tape });
           for (const step of done.steps) step.observation = measure(step.observation, testCase.measured ?? []);
@@ -128,18 +143,22 @@ export async function replay(options: Replaying): Promise<number> {
         if (original) {
           again = await measuredRun(original);
           const [found] = again.findings;
-          mismatch =
-            again.error ??
+          const completed = again.steps.map((step) => stored(normalize(step.observation, noise)));
+          departed =
             (found ? `step ${found.step}, tape ${found.request}: ${JSON.stringify(found.actual)}` : undefined) ??
-            firstDifference(compareCase(expected, again.steps.map((step) => stored(normalize(step.observation, noise)))));
+            firstDifference(compareCase(expected.slice(0, completed.length), completed));
+          mismatch = [departed, again.error].filter((each) => each !== undefined).join('; ') || undefined;
         }
         const run = await measuredRun(url);
         const actual = run.steps.map((step) => normalize(step.observation, noise));
         const results = compareCase(expected.slice(0, actual.length), actual.map(stored));
+        const departs = run.findings.length > 0 || differing(results);
+        let resized = false;
         const sameSession = again && !mismatch && again.steps.length === run.steps.length ? again : undefined;
         if (sameSession) {
           const masked = maskObservations(noise, sameSession.steps.map((step) => step.observation), sameSession.steps.map((step) => step.observation)).observations;
           const sizes = compareCase(masked.map(laidOut), actual.map(laidOut));
+          resized = differing(sizes);
           sizes.forEach((layers, index) => {
             for (const layer of LAYERS) {
               results[index][layer].differences.push(...layers[layer].differences);
@@ -172,20 +191,22 @@ export async function replay(options: Replaying): Promise<number> {
           item.steps.push(stepReport(index + 1, (redact ? redactStep : describeStep)(testCase.steps[index]), step, screenshot, layers, step.unread, reads));
         }
         if (drift) {
-          const state = (error: string | undefined, differs: boolean): DriftState =>
-            error !== undefined && UNREACHABLE.test(error) ? 'not checked' : differs ? 'differs' : 'matches';
+          const state = (differs: boolean, error: string | undefined): DriftState =>
+            differs ? 'differs' : unreachable(error) ? 'not checked' : error !== undefined ? 'differs' : 'matches';
           item.drift = {
-            original: state(again?.error, mismatch !== undefined),
-            port: state(run.error, run.error !== undefined || item.steps.some((step) => step.result === 'fail')),
+            original: state(departed !== undefined, again?.error),
+            port: state(departs, run.error),
+            ...(resized && !departs ? { sizes: 'differ' as const } : {}),
           };
         }
-        item.error = mismatch ? `the original at ${original!.href} does not match its recording: ${mismatch}; sizes, positions and screenshots were not compared` : run.error;
+        item.error = mismatch ? `the original at ${original!.origin}/ does not match its recording: ${mismatch}; sizes, positions and screenshots were not compared` : run.error;
         if (mismatch && run.error) item.error += `; the port: ${run.error}`;
         for (const { step, request, actual } of run.findings) {
           if (step > run.steps.length) item.error += `; tape: ${request}: ${typeof actual === 'string' ? actual : JSON.stringify(actual)}`;
         }
       } catch (error) {
-        item.error = `cannot replay against the recording: ${(error as Error).message}`;
+        const why = error instanceof SyntaxError ? 'a file of it is not valid JSON' : (error as Error).message;
+        item.error = `cannot replay against the recording: ${why}`;
       }
     }
 
@@ -205,7 +226,7 @@ export async function replay(options: Replaying): Promise<number> {
 
     report.distinct = distinct(found);
     const finished = finish(report);
-    const shown = redact ? redactReport(finished) : finished;
+    const shown = redact ? redactReport(finished) : hideReport(finished, hider(cases.map((loaded) => loaded.case)));
     const summary = summarize(shown);
     await writeFile(join(out, 'report.json'), toJson(shown));
     await writeFile(join(out, 'summary.txt'), `${summary}\n`);

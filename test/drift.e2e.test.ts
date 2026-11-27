@@ -7,21 +7,39 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, beforeEach, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { unreachable } from '../src/replay.ts';
 
 const cli = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 
-const page = (text: string) => `<!doctype html><html lang="en"><head><title>Drift</title></head><body><main><p>${text}</p></main></body></html>`;
+const page = (text: string) => `<!doctype html><html lang="en"><head><title>Drift</title></head><body><main><p>${text}</p><img src="/logo.svg" alt="logo"></main></body></html>`;
 
 let root: string;
 let original: string;
 let port: string;
 const texts = { original: 'same', port: 'same' };
+const widths = { original: 10, port: 10 };
+const later = { original: 'page', port: 'page' };
+let dead: string;
 const closers: (() => void)[] = [];
 
 async function serve(side: keyof typeof texts): Promise<string> {
   const server = createServer((request, response) => {
-    const text = new URL(request.url!, 'http://localhost').pathname === '/' ? texts[side] : 'other';
-    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', connection: 'close' }).end(page(text));
+    const { pathname } = new URL(request.url!, 'http://localhost');
+    const send = (type: string, body: string) =>
+      response.writeHead(200, { 'content-type': type, 'cache-control': 'no-store', connection: 'close' }).end(body);
+    if (pathname === '/logo.svg') {
+      send('image/svg+xml', `<svg xmlns="http://www.w3.org/2000/svg" width="${widths[side]}" height="10"/>`);
+    } else if (pathname === '/next' && later[side] === 'empty') {
+      request.socket.destroy();
+    } else if (pathname === '/next' && later[side] === 'failing') {
+      response.writeHead(500, { connection: 'close' }).end();
+    } else if (pathname === '/next' && later[side] === 'dead') {
+      response.writeHead(302, { location: `${dead}/x`, connection: 'close' }).end();
+    } else if (pathname === '/next') {
+      send('text/html; charset=utf-8', page('next'));
+    } else {
+      send('text/html; charset=utf-8', page(pathname === '/' ? texts[side] : 'other'));
+    }
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   closers.push(() => server.close());
@@ -52,19 +70,25 @@ const states = async () => (await report()).cases.map((item: { id: string; drift
 
 before(async () => {
   root = await mkdtemp(join(tmpdir(), 'aa-drift-'));
-  for (const [id, path] of [['home', '/'], ['other', '/other']]) {
-    await mkdir(join(root, 'cases', 'two', id), { recursive: true });
-    const testCase = { format: 'angular-anything/case@1', id, viewport: { width: 400, height: 300 }, steps: [{ action: 'goto', path }] };
-    await writeFile(join(root, 'cases', 'two', id, 'case.json'), JSON.stringify(testCase));
+  for (const [suite, id, ...paths] of [['two', 'home', '/'], ['two', 'other', '/other'], ['walk', 'walk', '/', '/next']]) {
+    await mkdir(join(root, 'cases', suite, id), { recursive: true });
+    const steps = paths.map((path) => ({ action: 'goto', path }));
+    const testCase = { format: 'angular-anything/case@1', id, viewport: { width: 400, height: 300 }, steps };
+    await writeFile(join(root, 'cases', suite, id, 'case.json'), JSON.stringify(testCase));
   }
   [original, port] = await Promise.all([serve('original'), serve('port')]);
-  const recorded = await run('record', 'two', '--source', 'original', '--url', original);
-  assert.equal(recorded.status, 0, recorded.output);
+  dead = await unused();
+  for (const [suite, source] of [['two', 'original'], ['walk', 'walker']]) {
+    const recorded = await run('record', suite, '--source', source, '--url', original);
+    assert.equal(recorded.status, 0, recorded.output);
+  }
 });
 
 beforeEach(() => {
   texts.original = 'same';
   texts.port = 'same';
+  Object.assign(widths, { original: 10, port: 10 });
+  Object.assign(later, { original: 'page', port: 'page' });
 });
 
 after(async () => {
@@ -125,6 +149,96 @@ test('a server that cannot be reached is not checked, it is neither a change nor
   assert.doesNotMatch(noPort.output, /original changed|regressed|no drift/);
 });
 
+test('sizes that differ between the original and the port blame neither side, whichever of them moved', async () => {
+  for (const side of ['original', 'port'] as const) {
+    Object.assign(widths, { original: 10, port: 10, [side]: 40 });
+    const { status, output } = await drift();
+    assert.equal(status, 1, output);
+    assert.match(
+      output,
+      /^sizes or positions differ between the original and the port in home, other \(2 of 2 cases\): the recording holds none, so which side moved is not known$/m,
+    );
+    assert.doesNotMatch(output, /original changed|regressed|no drift|record again|not checked:/);
+    const differing = { ...same, sizes: 'differ' };
+    assert.deepEqual(await states(), [['home', differing], ['other', differing]]);
+  }
+});
+
+test('a port that differs from the recording and in sizes has regressed', async () => {
+  texts.port = 'broken';
+  widths.port = 40;
+  const { output } = await drift();
+  assert.match(output, /^the port regressed: home \(1 of 2 cases\)$/m);
+  assert.match(output, /^sizes or positions differ between the original and the port in other \(1 of 2 cases\)/m);
+});
+
+test('a finding of the tape alone is a difference of the port', async () => {
+  texts.port = 'same<script>fetch("/extra")</script>';
+  const { status, output } = await drift();
+  assert.equal(status, 1, output);
+  assert.match(output, /^the port regressed: home \(1 of 2 cases\)$/m);
+  assert.deepEqual(await states(), [['home', { original: 'matches', port: 'differs' }], ['other', same]]);
+  texts.port = 'same';
+  texts.original = 'same<script>fetch("/extra")</script>';
+  const asking = await drift();
+  assert.match(asking.output, /^the original changed: home \(1 of 2 cases\)$/m);
+  assert.match(asking.output, /does not match its recording: step 1, tape GET \/extra: /);
+  assert.deepEqual(await states(), [['home', { original: 'differs', port: 'matches' }], ['other', same]]);
+});
+
+const walk = async () => {
+  const { status, output } = await run('drift', 'walk', '--source', 'walker', '--url', port, '--original-url', original);
+  const [item] = JSON.parse(await readFile(join(root, 'reports', 'walker', 'report.json'), 'utf8')).cases;
+  return { status, output, drift: item.drift, error: item.error as string };
+};
+
+test('differences found before a network error still count', async () => {
+  texts.port = 'broken';
+  later.port = 'dead';
+  const regressed = await walk();
+  assert.match(regressed.output, /^the port regressed: walk \(1 of 1 case\)$/m);
+  assert.doesNotMatch(regressed.output, /not checked:/);
+  assert.deepEqual(regressed.drift, { original: 'matches', port: 'differs' });
+  texts.port = 'same';
+  texts.original = 'new';
+  later.port = 'page';
+  later.original = 'dead';
+  const changed = await walk();
+  assert.match(changed.output, /^the original changed: walk \(1 of 1 case\)$/m);
+  assert.doesNotMatch(changed.output, /not checked:|regressed/);
+  assert.deepEqual(changed.drift, { original: 'differs', port: 'matches' });
+  assert.match(changed.error, /does not match its recording: step 1, .*"new".*; step 2 \(goto \/next\): .*ERR_CONNECTION_REFUSED/);
+  later.port = 'failing';
+  assert.match((await walk()).error, /; the port: step 2 \(goto \/next\): the page answered 500/);
+});
+
+test('a route that answers nothing is a difference, an address that refuses is not checked', async () => {
+  later.port = 'failing';
+  assert.deepEqual((await walk()).drift, { original: 'matches', port: 'differs' });
+  later.port = 'empty';
+  const empty = await walk();
+  assert.match(empty.output, /^the port regressed: walk \(1 of 1 case\)$/m);
+  assert.deepEqual(empty.drift, { original: 'matches', port: 'differs' });
+  later.port = 'dead';
+  const refused = await walk();
+  assert.equal(refused.status, 1, refused.output);
+  assert.deepEqual(refused.drift, { original: 'matches', port: 'not checked' });
+  later.port = 'page';
+  later.original = 'dead';
+  assert.deepEqual((await walk()).drift, { original: 'not checked', port: 'matches' });
+});
+
+test('an unresolved name, an unreachable address and a timeout of the network are not checked, other errors differ', () => {
+  for (const code of ['CONNECTION_REFUSED', 'CONNECTION_RESET', 'NAME_NOT_RESOLVED', 'ADDRESS_UNREACHABLE', 'TIMED_OUT']) {
+    assert.ok(unreachable(`step 1 (goto /): page.goto: net::ERR_${code} at http://localhost/`), code);
+  }
+  for (const code of ['EMPTY_RESPONSE', 'ABORTED', 'TOO_MANY_REDIRECTS', 'CERT_AUTHORITY_INVALID']) {
+    assert.ok(!unreachable(`step 1 (goto /): page.goto: net::ERR_${code} at http://localhost/`), code);
+  }
+  assert.ok(!unreachable('step 1 (goto /): the page answered 500'));
+  assert.ok(!unreachable(undefined));
+});
+
 test('a recording that the lock refuses is not checked', async () => {
   const file = join(root, 'recordings', 'original', 'home', '01.json');
   const kept = await readFile(file, 'utf8');
@@ -136,6 +250,22 @@ test('a recording that the lock refuses is not checked', async () => {
     assert.doesNotMatch(output, /original changed|regressed|no drift/);
   } finally {
     await writeFile(file, kept);
+  }
+});
+
+test('replay, gate and drift never print or store the query of --url or --original-url', async () => {
+  texts.original = 'new';
+  texts.port = 'broken';
+  for (const command of ['replay', 'gate', 'drift']) {
+    const { status, output } = await run(
+      command, 'two', '--source', 'original', '--url', `${port}/?zqkey=zqport`, '--original-url', `${original}/?zqkey=zqoriginal`,
+    );
+    assert.equal(status, 1, output);
+    const stored = await report();
+    assert.deepEqual([stored.url, stored.original], [`${port}/`, `${original}/`]);
+    const all = output + JSON.stringify(stored) + (await readFile(join(root, 'reports', 'original', 'summary.txt'), 'utf8'));
+    assert.doesNotMatch(all, /zq/, command);
+    assert.match(output, /does not match its recording/);
   }
 });
 

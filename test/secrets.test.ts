@@ -90,17 +90,29 @@ test('of an authorization header the part after the scheme word is the credentia
 
 test('each pattern finds its own shape and nothing near it', () => {
   const cases: [string, string[], string[]][] = [
-    ['jwt', [jwt, `x ${jwt} y`, 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJmYWtlIn0.'], ['eyJhbGciOiJub25lIn0', 'one.two.three', 'eyJhbGciOiJub25lIn0.plain.sig']],
-    ['pem', ['-----BEGIN PRIVATE KEY-----\nfake', '-----BEGIN CERTIFICATE-----'], ['----- BEGIN here', 'BEGIN PRIVATE KEY']],
+    [
+      'jwt',
+      [jwt, `x ${jwt} y`, 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJmYWtlIn0.', `id-${jwt}`, `a.${jwt}`, `eyJaaaa.${jwt}`],
+      ['eyJhbGciOiJub25lIn0', 'one.two.three', 'eyJhbGciOiJub25lIn0.plain.sig', 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJmYWtlIn0', 'eyJ.eyJzdWIiOiJmYWtlIn0.', 'abcdefghij.eyJzdWIiOiJmYWtlIn0.'],
+    ],
+    ['pem', ['-----BEGIN PRIVATE KEY-----\nfake', '-----BEGIN CERTIFICATE-----'], ['----- BEGIN here', 'BEGIN PRIVATE KEY', '-----BEGIN -----']],
     [
       'bearer-or-basic',
-      ['Bearer abc123def456', 'sent: basic dXNlcjpwYXNz.', 'BEARER aaaa-bbbb.cccc'],
-      ['Bearer', 'Basic features', 'Basic Information.', 'Bearer a1b2c3', 'the bearer of this letter', 'Basicabc123def456', 'rebasic abc123def456'],
+      ['Bearer abc123def456', 'sent: basic dXNlcjpwYXNz.', 'BEARER aaaa-bbbb.cccc', 'Basic YWRhOnA='],
+      [
+        'Bearer', 'Basic features', 'Basic Information.', 'Bearer a1b2c3', 'the bearer of this letter', 'Basicabc123def456', 'rebasic abc123def456',
+        'Basic JavaScript', 'Basic PowerPoint course', 'basic read/write', 'Basic information/settings', 'Basic abc123def456', 'Basic dXNlcnBhc3M=',
+        `Basic ${Buffer.from('a\x01:b123').toString('base64')}`, 'Basic YWRh.OnBhc3M',
+      ],
     ],
     [
       'url-password',
-      ['https://ada:fakepass@example.test/x', 'see postgres://u:p@db/x'],
-      ['https://example.test/a:b@c', 'https://ada@example.test', 'https://:fakepass@example.test', 'mailto:ada@example.test', 'http://host:80/?q=a@b'],
+      ['https://ada:fakepass@example.test/x', 'see postgres://u:p@db/x', '{"u":"https://ada:p!$&\'()*+,;=@h"}', 'x1+http://u:p@h', 'git+ssh://u:p@h'],
+      [
+        'https://example.test/a:b@c', 'https://ada@example.test', 'https://:fakepass@example.test', 'mailto:ada@example.test', 'http://host:80/?q=a@b',
+        '{"site":"https://example.test:8443","email":"ada@example.test"}', '<https://example.test:8443>ada@example.test', '123://u:p@h', '://u:p@h',
+        '{"a":"https://example.test","b":"x:y@z"}', '<https://example.test>x:y@z',
+      ],
     ],
   ];
   for (const [kind, found, missed] of cases) {
@@ -285,4 +297,53 @@ test('the accept list of a case needs a layer, a path, a kind and a reason, and 
   };
   assert.deepEqual(parseCase(JSON.stringify({ ...testCase, accept: [good] }), 'a').accept, [good]);
   assert.throws(() => parseCase(JSON.stringify({ ...testCase, accept: [{ ...good, reason: '' }] }), 'a'), /needs a "reason"/);
+});
+
+test('a large text is searched in time that grows with its length', () => {
+  const texts = ['x'.repeat(200_000), 'eyJ'.repeat(70_000), 'eyJaaaa.'.repeat(25_000), 'a://'.repeat(50_000), 'a://b:'.repeat(30_000), 'Basic '.repeat(30_000)];
+  const started = performance.now();
+  for (const text of texts) kindsOf(text, none);
+  assert.ok(performance.now() - started < 2000, `${Math.round(performance.now() - started)} ms`);
+});
+
+test('a cookie is found unquoted and decoded, and a percent escape in either case', () => {
+  const seen = newSeen();
+  const encoded = 's%3AFakeSessionValue0123456789.abc%2Fdef%3D';
+  addSetCookie(seen, `a=${encoded}; Path=/\nb="${word}"; Path=/\nc="Fake%20Spaced%20Value%200123"`);
+  for (const text of [encoded, decodeURIComponent(encoded), word, 'Fake Spaced Value 0123']) assert.deepEqual(kindsOf(text, seen.credentials), ['credential'], text);
+  const header = 'Fake/Value+0123456789==';
+  assert.deepEqual(kindsOf('x=Fake%2fValue%2b0123456789%3d%3d', holding(header)), ['credential']);
+  assert.deepEqual(kindsOf('x=fake%2fValue%2b0123456789%3d%3d', holding(header)), []);
+  const broken = newSeen();
+  addSetCookie(broken, `a=%zz${word}`);
+  assert.deepEqual(kindsOf(`%zz${word}`, broken.credentials), ['credential']);
+});
+
+test('the password of a Basic authorization header is a credential, also decoded', () => {
+  const password = 'FakeBasicPass0123456789';
+  const pair = `ada:${password}:more`;
+  const seen = newSeen();
+  addCredential(seen, 'authorization', `Basic ${Buffer.from(pair).toString('base64')}`);
+  for (const text of [pair, `${password}:more`]) assert.deepEqual(kindsOf(text, seen.credentials), ['credential'], text);
+  const short = newSeen();
+  addCredential(short, 'authorization', `Basic ${Buffer.from('ada-user-name:short').toString('base64')}`);
+  assert.deepEqual(kindsOf('ada-user-name:short', short.credentials), ['credential']);
+  const other = newSeen();
+  addCredential(other, 'authorization', `Bearer ${Buffer.from(pair).toString('base64')}`);
+  assert.deepEqual(kindsOf(pair.slice(4), other.credentials), []);
+});
+
+test('a query value that is not UTF-8 is searched as the page got it, and named by its place', () => {
+  assert.deepEqual(scanUrl(new URL(`http://h/?t=%FF${jwt}`), newSeen()).map(describeFinding), ['--url, layer url, path query["t"][0]: jwt']);
+});
+
+test('a credential that is not well formed text does not stop the check', () => {
+  assert.deepEqual(kindsOf('nothing here', holding(`\ud800${word}`)), []);
+});
+
+test('an accepted index does not stand for a step into a shadow tree', () => {
+  const [found] = scan({ fields: [['html[1]/input[1]']], observations: [empty()] });
+  const accepts = (path: string) => isAccepted(found, parseAccept([{ layer: 'dom', path, kind: 'secret-field', reason: 'a test value' }]));
+  assert.ok(accepts('html[1]/input[1].props.value'));
+  assert.ok(!accepts('html[1][0].input[1].props.value'));
 });

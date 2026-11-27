@@ -96,7 +96,13 @@ function stepProblem(step: unknown): string | undefined {
 }
 
 export function parseCase(text: string, id: string): Case {
-  const data: unknown = JSON.parse(text);
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch (error) {
+    const [at = ''] = / at position \d+( \(line \d+ column \d+\))?$/.exec((error as Error).message) ?? [];
+    throw new Error(`the case is not valid JSON${at}`);
+  }
   if (!isObject(data)) throw new Error('the case is not an object');
   if (data.format !== CASE_FORMAT) throw new Error(`"format" must be "${CASE_FORMAT}"`);
   const unknown = Object.keys(data).find((name) => !CASE_KEYS.includes(name));
@@ -145,14 +151,19 @@ export const describeTarget = (target: Target): string =>
     target.within === undefined ? '' : ` in ${describeTarget(target.within)}`,
   ].join('');
 
+const NAMED_KEY =
+  /^((Shift|Control|Alt|Meta|ControlOrMeta)\+)*(Enter|Tab|Escape|Space|Backspace|Delete|Insert|Arrow(Up|Down|Left|Right)|Home|End|PageUp|PageDown|F\d{1,2}|Shift|Control|Alt|Meta)$/;
+
+export const isNamedKey = (key: string): boolean => NAMED_KEY.test(key);
+
 export function describeStep(step: Step): string {
   switch (step.action) {
     case 'goto':
       return `goto ${step.path}`;
     case 'fill':
-      return `fill ${describeTarget(step.target)} with ${JSON.stringify(step.value)}`;
+      return `fill ${describeTarget(step.target)}`;
     case 'press':
-      return `press ${step.key} on ${describeTarget(step.target)}`;
+      return `press ${isNamedKey(step.key) ? step.key : 'a typed key'} on ${describeTarget(step.target)}`;
     case 'reload':
       return 'reload';
     case 'advance':

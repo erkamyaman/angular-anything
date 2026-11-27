@@ -1,17 +1,17 @@
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { chromium } from 'playwright';
 import type { Browser } from 'playwright';
 import playwrightPackage from 'playwright/package.json' with { type: 'json' };
 import { describeStep, loadSuite } from './case.ts';
 import { writeLock } from './lock.ts';
 import { audit, compile, maskObservations, normalize } from './noise.ts';
 import { measure, stored as storedLayers } from './layout.ts';
-import { runCase } from './run.ts';
-import { describeFinding, isAccepted, kindsOf, newSeen, scanCase, scanUrl } from './secrets.ts';
+import { launchBrowser, runCase } from './run.ts';
+import { describeFinding, isAccepted, isSecret, kindsOf, newSeen, scanCase, scanUrl } from './secrets.ts';
 import type { Finding as Secret } from './secrets.ts';
-import { maskRequest } from './tape.ts';
+import { agreedTape, maskRequest } from './tape.ts';
 import type { Finding } from './tape.ts';
+import { hider } from './typed.ts';
 
 export const RECORDING_FORMAT = 'angular-anything/recording@4';
 export const RECORDING_FILE = 'recording.json';
@@ -36,7 +36,8 @@ export const stepFile = (index: number): string => String(index + 1).padStart(2,
 
 export const toJson = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 
-function misfit({ step, request, actual, differs = [] }: Finding): string {
+function misfit({ step, request, actual, differs = [], absent }: Finding): string {
+  if (absent) return `step ${step}: the second run did not send ${request.split('?')[0]}, which the first run sent`;
   const reason = typeof actual === 'string' ? `: ${actual}` : '';
   const parts = differs.length > 0 ? `, the parts that differ: ${differs.join(', ')}` : '';
   return `step ${step}: the second run sent ${request.split('?')[0]}, which does not fit the tape of the first run${reason}${parts}`;
@@ -59,7 +60,9 @@ export const versions = (browser: Browser) => ({
 
 export async function record({ root, suite, source, url }: Options): Promise<number> {
   const cases = await loadSuite(root, suite);
-  const browser = await chromium.launch();
+  const hide = hider(cases.map((loaded) => loaded.case));
+  const say = (lines: string[]) => console.log(lines.map(hide).join('\n'));
+  const browser = await launchBrowser();
   try {
     const pins = versions(browser);
     const stored = join(root, 'recordings', source);
@@ -108,14 +111,15 @@ export async function record({ root, suite, source, url }: Options): Promise<num
       const seen = newSeen();
       const run = (replayed?: Parameters<typeof runCase>[6]) =>
         runCase(browser, testCase, url, undefined, undefined, undefined, replayed, seen);
+      const noise = compile(testCase.noise ?? []);
       const first = await run();
       const stopped = first.refusals.length > 0 || first.error !== undefined;
-      const second = stopped ? first : await run({ entries: first.tape, second: true });
+      const second = stopped ? first : await run({ entries: first.tape.map((entry) => maskRequest(entry, noise)), second: true });
       const misfits = second.findings.map(misfit);
       const refusals = first.refusals.length > 0 ? first.refusals : second.refusals;
       const error = refusals.length > 0 ? undefined : (first.error ?? second.error);
 
-      const noise = compile(testCase.noise ?? []);
+      const tape = agreedTape(first.tape, second.taken, noise, (text, names) => hide(text) !== text || isSecret(text, names, seen.credentials));
       const measured = testCase.measured ?? [];
       const matched = new Set<(typeof measured)[number]>();
       const read = (done: typeof first) => done.steps.map((step) => normalize(measure(step.observation, measured, matched), noise));
@@ -128,11 +132,11 @@ export async function record({ root, suite, source, url }: Options): Promise<num
       const report = (lines: string[]) => {
         for (const line of lines) {
           const kinds = kindsOf(line, seen.credentials);
-          console.log(`      ${kinds.length > 0 ? `a line is left out, it holds a detected secret: ${kinds.join(', ')}` : line}`);
+          console.log(`      ${kinds.length > 0 ? `a line is left out, it holds a detected secret: ${kinds.join(', ')}` : hide(line)}`);
         }
       };
       if (secrets.length > 0) {
-        console.log(refusal(testCase.id, secrets).join('\n'));
+        say(refusal(testCase.id, secrets));
         report(refusals);
         if (error) report([error]);
         if (inUrl.length > 0) {
@@ -164,7 +168,7 @@ export async function record({ root, suite, source, url }: Options): Promise<num
       const unmatched = measured.filter((entry) => !matched.has(entry));
       if (unmatched.length > 0) {
         console.log(`FAIL  ${testCase.id}`);
-        for (const entry of unmatched) console.log(`      the measured entry ${entry.layer} ${entry.path} matches nothing in any step`);
+        say(unmatched.map((entry) => `      the measured entry ${entry.layer} ${entry.path} matches nothing in any step`));
         continue;
       }
       const audited = audit(noise, left, right);
@@ -190,7 +194,7 @@ export async function record({ root, suite, source, url }: Options): Promise<num
       for (const [index, step] of first.steps.entries()) {
         await writeFile(join(directory, `${stepFile(index)}.json`), toJson(storedLayers(observations[index])));
       }
-      await writeFile(join(directory, TAPE_FILE), toJson(first.tape.map((entry) => maskRequest(entry, noise))));
+      await writeFile(join(directory, TAPE_FILE), toJson(tape));
       const recording: Recording = {
         format: RECORDING_FORMAT,
         suite,
@@ -205,9 +209,9 @@ export async function record({ root, suite, source, url }: Options): Promise<num
       const lock = await writeLock(directory, { ...pins, case: sha256 });
       recorded++;
       console.log(`ok    ${testCase.id}  steps: ${first.steps.length}, frames: ${recording.frames.join(' ')}, masked: ${masked}, root: ${lock.root}`);
-      for (const line of new Set(accepted.map(describeFinding))) console.log(`      accepted: ${line}`);
-      noise.forEach((entry, at) => console.log(`      noise ${entry.layer} ${entry.path}: ${counts[at]} values masked`));
-      for (const entry of audited.agreed) console.log(`      noise entry without a difference between the two runs: ${entry.layer} ${entry.path}`);
+      for (const line of new Set(accepted.map(describeFinding))) say([`      accepted: ${line}`]);
+      noise.forEach((entry, at) => console.log(`      noise ${entry.layer} ${hide(entry.path)}: ${counts[at]} values masked`));
+      for (const entry of audited.agreed) say([`      noise entry without a difference between the two runs: ${entry.layer} ${entry.path}`]);
       if (screenshotNoise.length > 0) console.log(`      screenshots that differed between the two runs, at step ${screenshotNoise.join(', ')}`);
     }
     console.log(`\nRecorded ${recorded} of ${cases.length} cases into ${join('recordings', source)}.`);

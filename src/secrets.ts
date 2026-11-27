@@ -30,9 +30,23 @@ const MIN_LENGTH = 16;
 
 export const newSeen = (): Seen => ({ credentials: new Set(), bodies: new WeakMap() });
 
+const percentDecoded = (text: string): string => {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+};
+
 export function addCredential(seen: Seen, header: string, text: string): void {
   const value = header === 'authorization' ? text.replace(/^\S+\s+/, '') : text;
-  if (value.length >= MIN_LENGTH) seen.credentials.add(value);
+  const unquoted = value.replace(/^"(.*)"$/s, '$1');
+  const forms = [value, unquoted, percentDecoded(unquoted)];
+  if (header === 'authorization' && /^basic\s/i.test(text)) {
+    const pair = Buffer.from(value, 'base64').toString('utf8');
+    forms.push(pair, pair.slice(pair.indexOf(':') + 1));
+  }
+  for (const form of forms) if (form.length >= MIN_LENGTH) seen.credentials.add(form);
 }
 
 export function addRequest(seen: Seen, headers: Record<string, string>): void {
@@ -48,36 +62,49 @@ export function addSetCookie(seen: Seen, header: string): void {
   }
 }
 
-function holds(text: string, value: string): boolean {
+const upperEscapes = (text: string): string => text.replace(/%[0-9a-f]{2}/gi, (escape) => escape.toUpperCase());
+
+function holds(text: string, escaped: string, value: string): boolean {
   const bytes = Buffer.from(value);
   const forms = [
     value,
     JSON.stringify(value).slice(1, -1),
-    encodeURIComponent(value.toWellFormed()),
     bytes.toString('base64').replace(/=+$/, ''),
     bytes.toString('base64url'),
   ];
-  return forms.some((form) => text.includes(form)) || text.toLowerCase().includes(bytes.toString('hex'));
+  return (
+    forms.some((form) => text.includes(form)) ||
+    escaped.includes(encodeURIComponent(value.toWellFormed())) ||
+    text.toLowerCase().includes(bytes.toString('hex'))
+  );
 }
 
+const userAndPassword = (value: string): boolean =>
+  /^[A-Za-z0-9+/]+={0,2}$/.test(value) && /^[^\x00-\x1f\x7f]*:[^\x00-\x1f\x7f]*$/.test(Buffer.from(value, 'base64').toString('latin1'));
+
 const schemed = (text: string): boolean =>
-  [...text.matchAll(/\b(?:bearer|basic)[ \t]+([A-Za-z0-9._~+/=-]+)/gi)].some(([, found]) => {
-    const value = found.replace(/\.+$/, '');
-    return value.length >= 8 && /[0-9._~+/=]|.[A-Z]/.test(value);
+  [...text.matchAll(/\b(bearer|basic)[ \t]+([A-Za-z0-9._~+/=-]+)/gi)].some(([, scheme, found]) => {
+    const value = found.replace(/(?<!\.)\.+$/, '');
+    if (value.length < 8) return false;
+    return scheme.toLowerCase() === 'basic' ? userAndPassword(value) : /[0-9._~+/=]|.[A-Z]/.test(value);
   });
 
+const webToken = (text: string): boolean =>
+  [...text.matchAll(/(?<![\w-])([\w-]+)\.(?=eyJ[\w-]{4,}\.)/g)].some(([, head]) => /eyJ[\w-]{4,}$/.test(head));
+
 const PATTERNS: [Kind, (text: string) => boolean][] = [
-  ['jwt', (text) => /eyJ[A-Za-z0-9_-]{4,}\.eyJ[A-Za-z0-9_-]{4,}\./.test(text)],
+  ['jwt', webToken],
   ['pem', (text) => /-----BEGIN [A-Z0-9 ]+-----/.test(text)],
   ['bearer-or-basic', schemed],
-  ['url-password', (text) => /[a-z][a-z0-9+.-]*:\/\/[^\s/?#@:]+:[^\s/?#@]+@/i.test(text)],
+  ['url-password', (text) => /:\/\/(?<=[a-z][a-z0-9+.-]*:\/\/)[^\s/?#@:"<>]+:[^\s/?#@"<>]+@/i.test(text)],
 ];
 
 const SECRET_NAME = /token|secret|password|api_key|session/i;
 
 export function kindsOf(text: string, credentials: Set<string>, key?: string): Kind[] {
   const kinds: Kind[] = [];
-  if ([...credentials].some((value) => holds(text, value))) kinds.push('credential');
+  const escaped = upperEscapes(text);
+  if ([...credentials].some((value) => holds(text, escaped, value))) kinds.push('credential');
   for (const [kind, found] of PATTERNS) if (found(text)) kinds.push(kind);
   if (key !== undefined && SECRET_NAME.test(key) && text.length >= MIN_LENGTH && !/\s/.test(text) && /\p{L}/u.test(text) && /\d/.test(text)) {
     kinds.push('named-value');
@@ -90,6 +117,9 @@ const textKinds = (text: string, credentials: Set<string>, key?: string): Kind[]
   if (!text.startsWith('base64:')) return kinds;
   return [...new Set([...kinds, ...kindsOf(Buffer.from(text.slice(7), 'base64').toString('utf8'), credentials)])];
 };
+
+export const isSecret = (text: string, names: string[], credentials: Set<string>): boolean =>
+  names.some((name) => SECRET_NAME.test(name)) || textKinds(text, credentials, names.at(-1)).length > 0;
 
 const tokensOf = (path: string): Token[] => {
   try {

@@ -39,7 +39,7 @@ test('a case with every kind of step is accepted and described', () => {
   assert.deepEqual(parsed, valid);
   assert.deepEqual(parsed.steps.map(describeStep), [
     'goto /',
-    'fill textbox "New task" with "Call mom"',
+    'fill textbox "New task"',
     'press Enter on textbox "New task"',
     'click button "Add"',
     'check checkbox "Buy milk"',

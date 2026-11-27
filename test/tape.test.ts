@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { compile } from '../src/noise.ts';
 import { bodyParts, urlParts } from '../src/parts.ts';
-import { maskedOutside, maskRequest, player, readNotes, requestKey } from '../src/tape.ts';
+import { agreedTape, maskedOutside, maskRequest, player, readNotes, requestKey } from '../src/tape.ts';
 import type { Asked, TapeEntry } from '../src/tape.ts';
 
 const base = new URL('http://localhost:4104/');
@@ -158,7 +158,7 @@ test('a changed mutation gets the next unused one with the same method and path,
 });
 
 test('the second run of record gets the closest recorded read for one that the tape does not hold, and it stays a finding', () => {
-  const play = player([entry(1, 0, asked('GET', '/a?n=1&m=1'), 'one'), entry(1, 0, asked('GET', '/a?n=2&m=2'), 'two')], [], true);
+  const play = player([entry(1, 0, asked('GET', '/a?n=1&m=1'), 'one'), entry(1, 0, asked('GET', '/a?n=2&m=2'), 'two')], true);
   assert.equal(body(play.take(asked('GET', '/a?n=2&m=3'), 1, 0)), 'two');
   assert.deepEqual(play.findings[0].differs, ['gets[*].query.m[0]']);
 });
@@ -174,7 +174,7 @@ test('a part that the case names as noise is not part of the key, of a read and 
   assert.equal(requestKey(write('1'), noise), requestKey(write('2'), noise));
   assert.notEqual(requestKey(read('1')), requestKey(read('2')));
   assert.notEqual(requestKey(write('1'), noise), requestKey(asked('POST', '/a', '{"id":7}'), noise), 'the kind stays');
-  const play = player([entry(1, 0, read('1'), 'r'), entry(1, 0, write('1'), 'w')], noise);
+  const play = player([entry(1, 0, maskRequest(read('1'), noise), 'r'), entry(1, 0, maskRequest(write('1'), noise), 'w')]);
   assert.equal(body(play.take(read('2'), 1, 0)), 'r');
   assert.equal(body(play.take(write('2'), 1, 0)), 'w');
   assert.deepEqual(play.findings, []);
@@ -182,7 +182,7 @@ test('a part that the case names as noise is not part of the key, of a read and 
   assert.deepEqual(stored.body, { id: { $aa: 'noise', kind: 'string' } });
   assert.deepEqual(maskRequest(read('1'), noise).url.query, { cb: [{ $aa: 'noise', kind: 'string' }] });
   const masked = [entry(1, 0, maskRequest(read('1'), noise), 'r'), entry(1, 0, stored, 'w')];
-  assert.equal(body(player(masked, noise).take(write('9'), 1, 0)), 'w');
+  assert.equal(body(player(masked).take(write('9'), 1, 0)), 'w');
   assert.deepEqual(maskedOutside(masked, noise), []);
   assert.deepEqual(maskedOutside(masked, []), ['gets[0].query.cb[0]', 'requests[0].body.id']);
 });
@@ -217,4 +217,160 @@ test('reads that the port sends more often, less often or in another order are n
   ]);
   assert.deepEqual(notes(a, b, asked('GET', '/c')), ['GET /c: the original sent it 0 times, the port 1 time']);
   assert.deepEqual(readNotes(original, [{ ...a, step: 1 }], 2).length, 2, 'only the reads of the step count');
+});
+
+test('a taped mutation of a step that ran and that nothing took is a finding of that step', () => {
+  const play = player(tape);
+  play.take(add, 4, 0);
+  assert.deepEqual(play.unsent(3), []);
+  assert.deepEqual(play.unsent(4), []);
+  assert.deepEqual(play.unsent(6), [
+    {
+      step: 5,
+      request: 'POST /api/list',
+      expected: 'sent in this step',
+      actual: 'the page did not send it, or cancelled it before it was let go',
+      differs: [],
+      absent: true,
+    },
+  ]);
+});
+
+test('a changed mutation takes the one it stands for, so that one is not missing as well', () => {
+  const play = player(tape);
+  play.take(asked('POST', '/api/list', '{"title":"Eggs","done":false}'), 4, 0);
+  assert.deepEqual(play.unsent(4), []);
+});
+
+const noisy = compile([
+  { layer: 'effects', path: 'gets[0].path[2]' },
+  { layer: 'effects', path: 'gets[0].query.r[0]' },
+  { layer: 'effects', path: 'requests[0].url.path[2]' },
+  { layer: 'effects', path: 'requests[0].body.id' },
+  { layer: 'effects', path: 'requests[0].body.n' },
+  { layer: 'effects', path: 'requests[0].body.big' },
+]);
+const mask = { $aa: 'noise', kind: 'string' };
+const user = (id: string, r = 'x') => asked('GET', `/api/user/${id}?r=${r}`);
+const save = (id: string, body: string) => asked('POST', `/api/user/${id}`, body);
+const never = () => false;
+const agreed = (first: Asked[], again: Asked[], withheld: (text: string, names: string[]) => boolean = never) =>
+  agreedTape(
+    first.map((request, at) => entry(1, 0, request, `${at}`)),
+    again.map((request) => ({ ...request, step: 1 })),
+    noisy,
+    withheld,
+  );
+
+test('at a noise path the tape keeps what the two runs of record agree on, request by request in any order', () => {
+  const kept = agreed(
+    [user('1', 'same'), user('rand1', 'same'), user('2', 'q1'), save('7', '{"id":"a1","n":5,"t":"x"}')],
+    [save('7', '{"id":"b2","n":5,"t":"x"}'), user('2', 'q2'), user('rand2', 'same'), user('1', 'same')],
+  );
+  assert.deepEqual(
+    kept.map((each) => [each.url.path[2], each.url.query.r?.[0], each.body, each.answer?.body]),
+    [
+      ['1', 'same', null, '0'],
+      [mask, 'same', null, '1'],
+      ['2', mask, null, '2'],
+      ['7', undefined, { id: mask, n: 5, t: 'x' }, '3'],
+    ],
+  );
+});
+
+test('each request of the first run is held against one request of the second, its exact one first', () => {
+  const parts = (first: Asked[], again: Asked[]) => agreed(first, again).map((each) => [each.url.path[2], each.url.query.r[0]]);
+  assert.deepEqual(parts([user('rand1'), user('1')], [user('1'), user('rand2')]), [[mask, 'x'], ['1', 'x']]);
+  assert.deepEqual(parts([user('1', 'a'), user('1', 'z')], [user('1', 'a'), user('2', 'y')]), [['1', 'a'], [mask, mask]]);
+  assert.deepEqual(
+    parts([user('1', 'a'), user('1', 'a'), user('1', 'z')], [user('1', 'a'), user('1', 'a'), user('2', 'y')]),
+    [['1', 'a'], ['1', 'a'], [mask, mask]],
+  );
+  assert.deepEqual(parts([user('x1', 'a'), user('x2', 'a')], [user('y', 'a'), user('z', 'b')]), [[mask, 'a'], [mask, mask]]);
+});
+
+test('a request that the second run did not send is masked at every noise path, and one sent less often keeps what the other one shows', () => {
+  const [alone] = agreed([user('1')], []);
+  assert.deepEqual([alone.url.path[2], alone.url.query.r], [mask, [mask]]);
+  assert.deepEqual(agreed([user('1'), user('1')], [user('1')]).map((each) => each.url.path[2]), ['1', '1']);
+  const [other] = agreed([user('1')], [asked('GET', '/api/group/1?r=x')]);
+  assert.deepEqual(other.url.path[2], mask);
+  const [early] = agreedTape([entry(2, 0, user('1'), '')], [{ ...user('9'), step: 1 }, { ...user('1'), step: 3 }], noisy, never);
+  assert.equal(early.url.path[2], '1');
+  const [same] = agreedTape([entry(2, 0, user('1'), '')], [{ ...user('1'), step: 1 }, { ...user('9'), step: 2 }], noisy, never);
+  assert.deepEqual(same.url.path[2], mask);
+});
+
+test('a value that is withheld is never kept, and it is asked about with the names on its path', () => {
+  const asks: [string, string[]][] = [];
+  const [read, write] = agreed([user('1', 'hidden'), save('7', '{"id":"hidden","n":12345}')], [user('1', 'hidden'), save('7', '{"id":"hidden","n":12345}')], (text, names) => {
+    asks.push([text, names]);
+    return text === 'hidden' || text === '12345';
+  });
+  assert.deepEqual([read.url.path[2], read.url.query.r], ['1', [mask]]);
+  assert.deepEqual(write.body, { id: mask, n: { $aa: 'noise', kind: 'number' } });
+  assert.deepEqual(asks.find(([text]) => text === '12345')?.[1], ['requests', 'body', 'n']);
+  const large = save('7', '{"big":12345678901234567890}');
+  agreed([large], [large], (text) => (asks.push([text, []]), false));
+  assert.ok(asks.some(([text]) => text === '12345678901234567890'), JSON.stringify(asks));
+});
+
+test('the gate checks a kept part and lets a masked one be anything of its kind', () => {
+  const tape = agreed(
+    [user('1'), user('rand1'), save('7', '{"id":"a1","n":5}')],
+    [user('1'), user('rand2'), save('7', '{"id":"b2","n":5}')],
+  );
+  const play = player(tape);
+  assert.equal(body(play.take(user('whatever'), 1, 0)), '1');
+  assert.equal(body(play.take(user('1'), 1, 0)), '0');
+  assert.equal(body(play.take(save('7', '{"id":"c3","n":5}'), 1, 0)), '2');
+  assert.deepEqual(play.findings, []);
+  for (const wrong of [save('8', '{"id":"c3","n":5}'), save('7', '{"id":"c3","n":6}'), save('7', '{"id":3,"n":5}')]) {
+    const other = player(tape);
+    other.take(wrong, 1, 0);
+    assert.equal(other.findings.length, 1, JSON.stringify(wrong));
+  }
+  const changed = player(tape);
+  changed.take(save('7', '{"id":"c3","n":6}'), 1, 0);
+  assert.deepEqual(changed.findings[0].differs, ['requests[*].body.n']);
+  assert.deepEqual(changed.findings[0].actual, { url: tape[2].url, body: { id: mask, n: 6 } });
+  const only = player([tape[0]]);
+  assert.equal(only.take(user('999'), 1, 0), undefined);
+  assert.deepEqual(only.findings[0].differs, ['gets[*].path[2]']);
+});
+
+test('kept parts that differ only at noise paths have their own answers and counts', () => {
+  const requests = [user('1'), user('1'), user('2')];
+  const reads = player(agreed(requests, requests));
+  assert.deepEqual([user('2'), user('1'), user('1')].map((each) => body(reads.take(each, 1, 0))), ['2', '0', '1']);
+  const writes = [save('7', '{"id":"a","n":1}'), save('8', '{"id":"a","n":1}')];
+  const play = player(agreed(writes, writes));
+  assert.deepEqual([writes[1], writes[0]].map((each) => body(play.take(each, 1, 0))), ['1', '0']);
+  assert.deepEqual(play.findings, []);
+});
+
+test('the entry that keeps the most is the one that answers, and the next one takes what is left', () => {
+  const tape = agreed([user('rand1'), user('1')], [user('rand2'), user('1')]);
+  assert.equal(body(player(tape).take(user('1'), 1, 0)), '1');
+  const writes = agreed([save('rand1', '{}'), save('1', '{}')], [save('rand2', '{}'), save('1', '{}')]);
+  const play = player(writes);
+  assert.deepEqual([save('1', '{}'), save('1', '{}')].map((each) => body(play.take(each, 1, 0))), ['1', '0']);
+  assert.deepEqual(play.findings, []);
+});
+
+test('what differs from the tape is told without the parts that the nearest request stores as their kind', () => {
+  const tape = agreed(
+    [asked('GET', '/api/group/9?r=c'), user('5', 'a')],
+    [asked('GET', '/api/group/9?r=c'), user('5', 'b')],
+  );
+  const play = player(tape);
+  play.take(user('999', 'c'), 1, 0);
+  assert.deepEqual(play.findings[0].differs, ['gets[*].path[2]']);
+});
+
+test('a changed mutation is also found where its path stores a part as its kind', () => {
+  const play = player(agreed([save('rand1', '{"t":1}')], [save('rand2', '{"t":1}')]));
+  play.take(save('rand3', '{"t":2}'), 1, 0);
+  assert.equal(play.findings[0].request, 'POST /api/user/rand3 (changed mutation)');
+  assert.deepEqual(play.findings[0].differs, ['requests[*].body.t']);
 });

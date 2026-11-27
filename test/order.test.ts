@@ -179,3 +179,14 @@ for (const [name, evaluate] of broken) {
     assert.deepEqual(await order.sorted([b, a]), [a, b]);
   });
 }
+
+test('a request keeps the place it was given the first time, also when a later one looks the same', async () => {
+  const { session, sends } = fake();
+  const order = await sendOrder(session);
+  const [first, between] = [request('x'), request('y')];
+  sends('x');
+  sends('y');
+  sends('x');
+  await order.sorted([first]);
+  assert.deepEqual(await order.sorted([between, first]), [first, between]);
+});

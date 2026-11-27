@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { after, test } from 'node:test';
 import { checkLiterals } from '../src/literals.ts';
 
@@ -25,22 +25,22 @@ const values = ['eight888', 'Call the bank', 'Water the plants', 'Buy more milk'
 
 const recordings = () =>
   tree({
-    'one/01.json': JSON.stringify({
+    'react/one/01.json': JSON.stringify({
       dom: { tag: 'html', children: values.map((value) => ({ tag: 'p', children: [value] })) },
       style: { 'html[1]': { style: { color: 'rgb(1, 2, 3)' } } },
       effects2: { mask: { $aa: 'noise', kind: 'empty string' } },
       events: [{ name: 'e', payload: { amp: 'Fish & <chips>', uni: 'Caf\u00e9 \u{1f600} au lait', lines: 'first line\nsecond', total: 48213.5, big: 100000, four: 4821, text: '73519', short: 'seven77', huge: { $aa: 'number', source: '12345678901234567890' } } }],
-      effects: { title: ' Padded heading ' },
+      effects: { title: ' Padded heading ', popups: ["What's next today"], below: -73001.5 },
     }),
-    'one/tape.json': JSON.stringify([{ answer: { body: '{"items":["Only on the tape","A second answer"],"id":90817263}' } }]),
-    'one/recording.json': JSON.stringify({ url: 'http://recording.example' }),
-    'one/lock.json': JSON.stringify({ root: 'abcdefabcdefabcdef' }),
-    'gone/01.json': JSON.stringify({ title: 'Of another suite' }),
+    'react/one/tape.json': JSON.stringify([{ answer: { body: '{"items":["Only on the tape","A second answer"],"id":90817263}' } }]),
+    'react/one/recording.json': JSON.stringify({ url: 'http://recording.example' }),
+    'react/one/lock.json': JSON.stringify({ root: 'abcdefabcdefabcdef' }),
+    'react/gone/01.json': JSON.stringify({ title: 'Of another suite' }),
   });
 
 async function check(port: Record<string, string>, original: Record<string, string> = { 'app.js': 'nothing' }) {
   const [recorded, originalSource, portSource] = await Promise.all([recordings(), tree(original), tree(port)]);
-  return checkLiterals({ recorded, ids: ['one'], source: 'react', originalSource, portSource });
+  return checkLiterals({ recordings: recorded, ids: ['one'], source: 'react', originalSource, portSource });
 }
 
 const found = async (...args: Parameters<typeof check>) => (await check(...args)).found.map((each) => each.value).sort();
@@ -158,7 +158,90 @@ test('a source folder that is missing or holds no source file is refused', async
   await assert.rejects(check({ 'notes.md': 'x' }), /--port-source .* holds no source file/);
   await assert.rejects(check({ 'a.ts': 'x' }, {}), /--original-source .* holds no file/);
   await assert.rejects(
-    checkLiterals({ recorded: await recordings(), ids: ['one'], source: 'react', originalSource: '/nowhere-at-all', portSource: '/nowhere-at-all' }),
+    checkLiterals({ recordings: await recordings(), ids: ['one'], source: 'react', originalSource: '/nowhere-at-all', portSource: '/nowhere-at-all' }),
     /--original-source \/nowhere-at-all is not a folder/,
   );
+});
+
+const three = ['Call the bank', 'Water the plants', 'Buy more milk'];
+
+test('text in control flow blocks, beside an interpolation and in an attribute on its own line counts', async () => {
+  const forms: Record<string, (text: string, at: number) => string> = {
+    block: (text, at) => `<li>@if (i > ${at}) { ${text} }</li>`,
+    bare: (text) => `@if (a < b && c) {\n  ${text}\n}`,
+    chain: (text) => `<li>@if (a) { x } @else if (b > 1) { ${text} } @else { y }</li>`,
+    cases: (text, at) => `@switch (i) { @case (${at}) { ${text} } }`,
+    otherwise: (text) => `<ul>@for (x of list; track x) { <li></li> } @empty { ${text} }</ul>`,
+    deferred: (text) => `@defer (on idle) { <b></b> } @placeholder (minimum 1ms) { ${text} }`,
+    declared: (text) => `<p>@let n = a > 1; ${text}</p>`,
+    declaring: (text) => `<p>${text} @let n = a;</p>`,
+    ifNext: (text) => `<div>${text} @if (a > 1) { <b></b> }</div>`,
+    forNext: (text) => `<div>${text} @for (x of list; track x) { <b></b> }</div>`,
+    switchNext: (text) => `<div>${text} @switch (a) { @case (1) { <b></b> } }</div>`,
+    deferNext: (text) => `<div>${text} @defer { <b></b> }</div>`,
+    before: (text) => `<p>${text} {{ x }}</p>`,
+    between: (text) => `<p>{{ a > 1 }} ${text} {{ b < 2 }}</p>`,
+    lines: (text) => `<p title="\n  ${text}\n">x</p>`,
+    quoted: (text) => `<p title = '${text}\n'>x</p>`,
+  };
+  for (const [name, form] of Object.entries(forms)) {
+    const template = three.map(form).join('\n');
+    assert.deepEqual(await found({ 'a.html': template }), [...three].sort(), name);
+    assert.deepEqual(await found({ 'a.ts': `@Component({ template: \`\n${template}\n\` })` }), [...three].sort(), `${name}, inline`);
+  }
+  assert.deepEqual(await found({ 'a.ts': "@Component({ template: '<p>{{ x }} Call the bank</p>' })" }), ['Call the bank']);
+  assert.deepEqual(await found({ 'a.vue': '<template><p>{{ x }} Call the bank</p></template>' }), ['Call the bank']);
+  assert.deepEqual((await check({ 'a.html': '<div>\n@if (a) {\n\n  Call the bank\n}\n</div>' })).found, [{ file: 'a.html', line: 4, value: 'Call the bank' }]);
+  assert.deepEqual((await check({ 'a.ts': 'const x = 1;\nconst t = `\n<p>{{ x }}\nCall the bank</p>`;' })).found, [{ file: 'a.ts', line: 4, value: 'Call the bank' }]);
+  assert.deepEqual((await check({ 'a.html': '<p\n  title="\n  Call the bank">x</p>' })).found.map(({ value, line }) => [value, line]), [['Call the bank', 3]]);
+});
+
+test('braces of code are no template', async () => {
+  assert.deepEqual(await found({ 'a.ts': "const f = 'f() { Call the bank }';", 'a.css': 'a { Water the plants }' }), []);
+});
+
+test('source folders that would let every literal pass are refused', async () => {
+  const project = await tree({ 'react/app.js': 'x', 'angular/a.ts': 'x', 'recordings/react/one/01.json': JSON.stringify(three) });
+  const link = join(await tree({}), 'link');
+  await symlink(join(project, 'angular'), link);
+  const run = (originalSource: string, portSource: string, recordings = join(project, 'recordings')) =>
+    checkLiterals({ recordings, ids: ['one'], source: 'react', originalSource: resolve(project, originalSource), portSource: resolve(project, portSource) });
+  const elsewhere = await recordings();
+  for (const [original, port] of [['angular', 'angular'], ['.', 'angular'], ['.', link], ['angular', link], [link, 'angular']]) {
+    await assert.rejects(run(original, port, elsewhere), /--original-source .* holds the port source/, `${original} ${port}`);
+  }
+  const outside = await tree({ 'a.ts': 'x' });
+  for (const original of ['.', 'recordings', 'recordings/react', 'recordings/react/one']) {
+    await assert.rejects(run(original, outside), /--original-source .* holds the recordings or is inside them/, original);
+  }
+  assert.equal((await run('react', 'angular')).result, 'pass');
+  assert.equal((await run('react', '.')).result, 'fail');
+});
+
+test('every kind of source file of the port is read', async () => {
+  for (const extension of ['ts', 'mts', 'cts', 'js', 'mjs', 'cjs', 'tsx', 'jsx', 'html', 'css', 'scss', 'less', 'json', 'vue', 'svelte', 'svg']) {
+    assert.deepEqual(await found({ [`a.${extension}`]: '<p title="Call the bank">x</p>' }), ['Call the bank'], extension);
+  }
+});
+
+test('two slashes after a colon or a backslash start no comment, and none in an SVG file', async () => {
+  assert.deepEqual(await found({ 'a.scss': "a { b: url(http://x/y); content: 'Call the bank'; }" }), ['Call the bank']);
+  assert.deepEqual(await found({ 'a.ts': "x.replace(/\\//g, 'Water the plants');" }), ['Water the plants']);
+  assert.deepEqual(await found({ 'a.svg': '<svg><text>a // b</text><text>Buy more milk</text></svg>' }), ['Buy more milk']);
+});
+
+test('the original is also searched for a literal with its white space joined and as JSON writes it', async () => {
+  const port = { 'a.ts': `const a = 'Two  spaced words here';\nconst b = 'He said "no" twice';` };
+  assert.deepEqual(await found(port), ['He said "no" twice', 'Two spaced words here']);
+  assert.deepEqual(await found(port, { 'notes.txt': 'x Two spaced words here x He said \\"no\\" twice' }), []);
+});
+
+test('a recorded negative number is found by its digits, the other entities are read, and a Windows path names the recordings', async () => {
+  assert.deepEqual(await found({ 'a.ts': 'f(-73001.5);' }), ['73001.5']);
+  assert.deepEqual(await found({ 'a.html': '<p>He said &quot;no&quot; twice</p><p>What&#39;s next today</p><p>Call&nbsp;the bank</p>' }), [
+    'Call the bank',
+    'He said "no" twice',
+    "What's next today",
+  ]);
+  assert.deepEqual((await check({ 'a.html': '<i data-from="..\\recordings\\react"></i>' })).named.map((each) => each.name), ['recordings\\react']);
 });

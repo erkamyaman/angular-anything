@@ -45,11 +45,13 @@ type AngularJsInjector = {
 type Instrumented = {
   __aaEmit(json: string): void;
   __aaPopup?(json: string, opened: boolean): void;
+  __aaShared?(id: string, url: string): void;
   __aaSync?(request: string, waiting: boolean): void;
   __aaMutations: number;
   __aaRested?: number;
   __aaShadows: WeakMap<Element, ShadowRoot>;
   __aaSecretField?(el: Element): boolean;
+  __aaTyping?: Element[];
   __aaHeld: WeakSet<SVGSVGElement>;
   __aaSeen: WeakSet<Animation>;
   __aaPending?: Map<unknown, { due: number; delay: number }>;
@@ -195,6 +197,20 @@ export function initPage(): void {
         .split(/\s+/)
         .some((token) => secretAutocomplete.includes(token)));
 
+  const reaching = (event: Event) => {
+    const typing = page.__aaTyping;
+    if (!typing || !event.isTrusted) return;
+    let element = event.composedPath()[0] as Element | null | undefined;
+    while (element) {
+      typing.push(element);
+      element = (element.shadowRoot ?? page.__aaShadows.get(element))?.activeElement;
+    }
+    if (!typing.some((each) => page.__aaSecretField!(each))) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  for (const type of ['keydown', 'beforeinput']) addEventListener(type, reaching, true);
+
   page.__aaHeld = new WeakSet();
   page.__aaSeen = new WeakSet();
   page.__aaShadows = new WeakMap();
@@ -294,6 +310,26 @@ export function clampIntervals(): void {
     setInterval(handler, Math.max(1, Number(delay) || 0), ...rest)) as typeof window.setInterval;
 }
 
+export const SHARED_MARK = '__aaShared';
+
+export function blockSharedWorker(mark: string): void {
+  const page = window as unknown as Instrumented;
+  const cookie = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie')!.set!;
+  const blocked = function SharedWorker(url: unknown) {
+    let name = String(url);
+    try {
+      name = new URL(name, document.baseURI).href;
+    } catch {}
+    const id = Math.random().toString(36).slice(2);
+    try {
+      cookie.call(document, `${mark}${id}=${encodeURIComponent(name)}; path=/`);
+    } catch {}
+    page.__aaShared?.(id, name);
+    throw new DOMException('angular-anything does not run a SharedWorker', 'SecurityError');
+  };
+  Object.defineProperty(window, 'SharedWorker', { value: blocked, writable: true, enumerable: false, configurable: false });
+}
+
 export function trackTimers(): void {
   const page = window as unknown as Instrumented;
   const { setTimeout, clearTimeout, clearInterval } = window;
@@ -383,6 +419,15 @@ export function typesIntoSecretField(el: Element, pressed: boolean): boolean {
     focused = inner;
   }
   return false;
+}
+
+export function watchTyping(): void {
+  (window as unknown as Instrumented).__aaTyping = [];
+}
+
+export function typedIntoSecretField(): boolean {
+  const page = window as unknown as Instrumented;
+  return page.__aaTyping!.some((element) => page.__aaSecretField!(element));
 }
 
 export function adoptPage(...roots: ShadowRoot[]): void {
@@ -841,8 +886,6 @@ export function capturePage(): PageCapture {
       props.selected = (el as HTMLOptionElement).selected;
     }
 
-    if (typeof props.value === 'string' && props.value !== '' && page.__aaSecretField?.(el)) secretFields.push(path);
-
     const accessibility: Record<string, string> = {};
     for (const [name, value] of Object.entries(attrs)) {
       if (name.startsWith('aria-') || name === 'role' || name === 'tabindex' || name === 'required') {
@@ -900,6 +943,25 @@ export function capturePage(): PageCapture {
   }
 
   const dom = capture(document.documentElement, 'html[1]');
+
+  const pathOf = (el: Element): string => {
+    const known = paths.get(el);
+    if (known) return known;
+    const parent = el.parentNode as Element | ShadowRoot;
+    const above = parent instanceof ShadowRoot ? `${pathOf(parent.host)}/shadow-root[1]` : pathOf(parent);
+    const alike = [...parent.children].filter((child) => child.localName === el.localName);
+    return `${above}/${el.localName}[${alike.indexOf(el) + 1}]`;
+  };
+  const roots: (Document | ShadowRoot)[] = [document];
+  for (const root of roots) {
+    for (const element of root.querySelectorAll('*')) {
+      const shadow = element.shadowRoot ?? page.__aaShadows?.get(element);
+      if (shadow) roots.push(shadow);
+      if (page.__aaSecretField?.(element) && (element as HTMLInputElement).value !== '') {
+        secretFields.push(pathOf(element));
+      }
+    }
+  }
   return {
     dom,
     style,

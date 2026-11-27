@@ -17,6 +17,7 @@ const KEPT = words(
 
 const OPEN = words('payload body storage query');
 const STYLED = words('style layout inline');
+const PSEUDO = words('::before ::after');
 const KEYS = words('Enter Tab Shift+Tab Escape Space Backspace Delete ArrowUp ArrowDown ArrowLeft ArrowRight Home End PageUp PageDown');
 
 const digest = (text: string) => sha256(text).slice(0, 8);
@@ -36,7 +37,7 @@ export function shape(value: unknown): string | undefined {
 
 export function redactPath(layer: Layer, path: string): string {
   if (path.startsWith('tape ')) {
-    const [, method, rest] = /^tape (GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|WebSocket) ([^]*)$/.exec(path) ?? [];
+    const [, method, rest] = /^tape (GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|WebSocket|SharedWorker) ([^]*)$/.exec(path) ?? [];
     return method === undefined ? `tape ${mark(path)}` : `tape ${method} ${mark(rest)}`;
   }
   let tokens: Token[];
@@ -57,7 +58,7 @@ export function redactPath(layer: Layer, path: string): string {
       const next = tokens[at + 1];
       let keep: boolean;
       if (elements && (next === '/' || (typeof next === 'object' && 'index' in next) || key.startsWith('::'))) {
-        keep = key === 'text()' || /^(::)?[a-zA-Z][a-zA-Z0-9]*$/.test(key);
+        keep = key === 'text()' || PSEUDO.has(key) || /^[a-zA-Z][a-zA-Z0-9]*$/.test(key);
       } else if (elements) {
         keep = STYLED.has(before) ? /^-?[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(key) : KEPT.has(key);
       } else {

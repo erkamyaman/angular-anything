@@ -345,7 +345,7 @@ test('without the original the style bug fails at its declared value only, with 
 test('an original that does not match its recording fails the gate by name, and no size is compared', async () => {
   const { status, output } = await run('gate', 'tiny', '--source', 'original', '--url', port, '--original-url', `${original}/?bug=text`);
   assert.equal(status, 1, output);
-  assert.match(output, /^ {6}error: the original at http:\/\/127\.0\.0\.1:\d+\/\?bug=text does not match its recording: step 3, accessibility at tree\/main\[1\]\/paragraph\[1\]\.text: expected "saved Ada", actual "stored Ada"; sizes, positions and screenshots were not compared$/m);
+  assert.match(output, /^ {6}error: the original at http:\/\/127\.0\.0\.1:\d+\/ does not match its recording: step 3, accessibility at tree\/main\[1\]\/paragraph\[1\]\.text: expected "saved \[typed\]", actual "stored \[typed\]"; sizes, positions and screenshots were not compared$/m);
   assert.match(output, /0 identical, 0 different, 0 masked, 8 not compared\.$/m);
 });
 
@@ -368,9 +368,9 @@ test('replay writes the report, the summary and the screenshots that differ, and
       layer: 'dom',
       path: 'html[1]/body[1]/main[1]/p[1]/text()[1]',
       kind: 'text',
-      expected: 'saved Ada',
-      actual: 'stored Ada',
-      at: { offset: 1, expected: 's⟨a⟩ved Ada', actual: 's⟨t⟩ored Ada' },
+      expected: 'saved [typed]',
+      actual: 'stored [typed]',
+      at: { offset: 1 },
     },
   ]);
   assert.equal(report.cases[0].steps[2].screenshot, 'different');
@@ -527,7 +527,7 @@ test('record fails a case whose page never settles or whose target is missing, a
 
   const missing = await run('record', 'tiny', '--source', 'missing', '--url', empty);
   assert.equal(missing.status, 1, missing.output);
-  assert.match(missing.output, /^FAIL {2}save\n {6}step 2 \(fill textbox "Name" with "Ada"\): the target matches 0 elements, there is no textbox here$/m);
+  assert.match(missing.output, /^FAIL {2}save\n {6}step 2 \(fill textbox "Name"\): the target matches 0 elements, there is no textbox here$/m);
   assert.equal(await exists(join(root, 'recordings', 'restless')), false);
   assert.equal(await exists(join(root, 'recordings', 'missing')), false);
 });
@@ -562,7 +562,7 @@ test('record exits 1 when one case of the suite fails, and records the others', 
   const result = await run('record', 'mixed', '--source', 'mixed', '--url', empty);
   assert.equal(result.status, 1, result.output);
   assert.match(result.output, /^ok {4}fine /m);
-  assert.match(result.output, /^FAIL {2}broken\n {6}step 2 \(fill textbox "Name" with "Ada"\): the target matches 0 elements, there is no textbox here$/m);
+  assert.match(result.output, /^FAIL {2}broken\n {6}step 2 \(fill textbox "Name"\): the target matches 0 elements, there is no textbox here$/m);
   assert.match(result.output, /Recorded 1 of 2 cases into recordings\/mixed\./);
   assert.equal(await exists(join(root, 'recordings', 'mixed', 'fine', 'lock.json')), true);
   assert.equal(await exists(join(root, 'recordings', 'mixed', 'broken')), false);
@@ -574,7 +574,7 @@ test('a page with an empty main passes no case', async () => {
   assert.equal(status, 1, output);
   assert.match(output, /^FAIL {2}save$/m);
   assert.deepEqual(failingLayers(output), ['accessibility', 'DOM', 'style and geometry']);
-  assert.match(output, /error: step 2 \(fill textbox "Name" with "Ada"\): the target matches 0 elements/);
+  assert.match(output, /error: step 2 \(fill textbox "Name"\): the target matches 0 elements/);
   assert.match(output, /1 of 1 cases failed/);
 });
 

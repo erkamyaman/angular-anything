@@ -82,3 +82,11 @@ test('a URL that is shown as parts is also written out, for a window, a request 
   assert.doesNotMatch(read({ kind: 'alert', message: 'hi' }, undefined), /the URL/);
   assert.doesNotMatch(read({ path: 'x', query: 'y' }, 5), /the URL/);
 });
+
+test('the summary lists 20 literals and 20 named files and says how many more report.json holds', () => {
+  const list = Array.from({ length: 25 }, (_, at) => ({ file: 'a.ts', line: at + 1, value: `literal number ${at}`, name: 'tape.json' }));
+  const text = summarize({ ...report([item([step()])]), literals: { result: 'fail', found: list, named: list } });
+  assert.equal(text.match(/^ {6}a\.ts:\d+: "literal number \d+"$/gm)!.length, 20);
+  assert.equal(text.match(/^ {6}a\.ts:\d+: tape\.json$/gm)!.length, 20);
+  assert.equal(text.match(/^ {6}and 5 more in report\.json$/gm)!.length, 2);
+});

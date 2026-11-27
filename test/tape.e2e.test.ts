@@ -204,6 +204,76 @@ document.body.append(Object.assign(new Image(), { src: '/slow.gif', alt: '' }));
   ),
   '/cookie': doc(`<button id="go">Go</button>`, `on('go', () => fetch('/api/cookie?key=queryvalue'));`),
   '/redirect': doc(`<button id="go">Go</button>`, `on('go', () => fetch('/api/redirect?key=queryvalue'));`),
+  '/save': doc(
+    `<p id="out">?</p><button id="go">Go</button>`,
+    `on('go', () => {
+  const body = JSON.stringify({ a: 1 });
+  if (v === 'beacon') navigator.sendBeacon('/api/save', body);
+  else if (v !== 'none') {
+    const control = new AbortController();
+    fetch('/api/save', { method: 'POST', body, signal: control.signal }).catch(() => {});
+    if (v === 'abort') control.abort();
+  }
+  $('out').textContent = 'done';
+});`,
+  ),
+  '/leave': doc(
+    `<p>ready</p><button id="go">Go</button>`,
+    `const bye = { method: 'POST', body: 'WRONG', keepalive: true };
+const kinds = {
+  keepalive: () => fetch('/api/bye', bye),
+  beacon: () => navigator.sendBeacon('/api/bye', 'WRONG'),
+};
+if (kinds[v]) addEventListener('pagehide', kinds[v]);
+on('go', () => {
+  if (v !== 'popup') return;
+  const w = window.open('');
+  w.addEventListener('pagehide', () => w.fetch(location.origin + '/api/bye', bye));
+  w.close();
+});`,
+  ),
+  '/sockets': doc(
+    `<p id="out">?</p><button id="go">Go</button>`,
+    `const to = 'ws://' + location.host + '/api/socket';
+const frame = () => document.body.appendChild(Object.assign(document.createElement('iframe'), { hidden: true }));
+const kinds = {
+  popup: () => { const w = window.open(''); new w.WebSocket(to); },
+  closing: () => { const w = window.open(''); new w.WebSocket(to); w.close(); },
+  removed: () => { const f = frame(); new f.contentWindow.WebSocket(to); f.remove(); },
+  'popup-worker': () => { const w = window.open(''); new w.Worker(w.URL.createObjectURL(new w.Blob(["new WebSocket('" + to + "')"]))); },
+  worker: () => new Worker(URL.createObjectURL(new Blob(["new WebSocket('" + to + "')"]))),
+};
+on('go', () => { kinds[v]?.(); $('out').textContent = 'done'; });`,
+  ),
+  '/hops': doc(
+    `<p id="out">?</p><button id="go">Go</button>`,
+    `on('go', async () => {
+  const send = async (url, options) => (await fetch(url, options)).json();
+  const answers = [await send('/api/moved', { method: 'PUT', body: 'x' }), await send('/api/moved?see', { method: 'PUT', body: 'y' })];
+  $('out').textContent = answers.join(',');
+});`,
+  ),
+  '/hop-cookie': doc(`<button id="go">Go</button>`, `on('go', () => fetch('/api/hop-first'));`),
+  '/gives-up': doc(
+    `<p id="out">?</p><button id="go">Go</button>`,
+    `const timer = new Worker(URL.createObjectURL(new Blob(['onmessage = () => setTimeout(() => postMessage(0), 1800)'])));
+on('go', async () => {
+  const control = new AbortController();
+  timer.onmessage = () => control.abort();
+  timer.postMessage(0);
+  await fetch('/api/very-slow', { method: 'POST', signal: control.signal }).catch(() => {});
+  await fetch('/api/slow-read');
+  $('out').textContent = await (await fetch('/api/echo')).text();
+});`,
+  ),
+  '/held': doc(
+    `<button id="go">Go</button>`,
+    `on('go', () => { fetch('/api/stream'); fetch('/api/held', { method: 'POST' }); });`,
+  ),
+  '/while-closing': doc(
+    `<button id="go">Go</button>`,
+    `on('go', () => { window.open('').addEventListener('pagehide', () => fetch('/api/echo?late=1')); });`,
+  ),
 };
 
 let root: string;
@@ -241,7 +311,14 @@ function api(request: IncomingMessage, response: ServerResponse) {
     if (pathname === '/api/stream') return void response.writeHead(200, { 'content-type': 'text/event-stream' }).write('data: 1\n\n');
     if (pathname === '/api/cookie') return void response.writeHead(200, { 'set-cookie': 'sid=cookievalue' }).end();
     if (pathname === '/api/redirect') return void response.writeHead(302, { location: 'http://elsewhere.test/api/echo?to=targetvalue' }).end();
-    if (pathname === '/api/moved') return void response.writeHead(searchParams.has('keep') ? 307 : 302, { location: '/api/target' }).end();
+    if (pathname === '/api/moved') {
+      const status = searchParams.has('keep') ? 307 : searchParams.has('see') ? 303 : 302;
+      return void response.writeHead(status, { location: '/api/target' }).end();
+    }
+    if (pathname === '/api/hop-first') return void response.writeHead(302, { location: '/api/hop-second' }).end();
+    if (pathname === '/api/hop-second') return void response.writeHead(200, { 'set-cookie': 'sid=cookievalue' }).end();
+    if (pathname === '/api/very-slow') return void setTimeout(() => json(1), 1600);
+    if (pathname === '/api/slow-read') return void setTimeout(() => json(1), 1500);
     if (pathname === '/api/target') return void json(`${request.method} ${Buffer.concat(chunks)}`);
     if (request.method === 'PUT') return void response.writeHead(201, { location: '/api/made', 'x-secret': 'headervalue', 'www-authenticate': 'challengevalue' }).end();
     json('echo');
@@ -261,6 +338,10 @@ before(async () => {
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  server.on('upgrade', (request, socket) => {
+    hits.push(`UPGRADE ${request.url}`);
+    socket.destroy();
+  });
   browser = await chromium.launch();
 });
 
@@ -611,6 +692,33 @@ test('a read whose key differs between the two runs of record is named in the fo
   await passes('random');
 });
 
+test('at a noise path the tape keeps what both runs of record sent, so the gate sees another value there', async () => {
+  pages['/users'] = doc(
+    `<p id="out">?</p><button id="go">Go</button>`,
+    `on('go', async () => {
+  await (await fetch('/api/user/' + (v === 'read' ? '999' : '1'))).text();
+  await (await fetch('/api/session/r' + String(Math.random()).slice(2))).text();
+  await (await fetch('/api/save/' + (v === 'write' ? '999' : '1'), { method: 'POST' })).text();
+  await (await fetch('/api/log/r' + String(Math.random()).slice(2), { method: 'POST' })).text();
+  $('out').textContent = 'done';
+});`,
+  );
+  await suite('users', '/users', [click('Go')], {
+    noise: [
+      { layer: 'effects', path: 'gets[*].path[2]' },
+      { layer: 'effects', path: 'requests[*].url.path[2]' },
+    ],
+  });
+  const recorded = await record('users');
+  assert.equal(recorded.status, 0, recorded.output);
+  const stored = (await tapeOf('users')).map((entry: { url: { path: unknown[] } }) => entry.url.path[2]);
+  const mask = { $aa: 'noise', kind: 'string' };
+  assert.deepEqual(stored, ['1', mask, '1', mask]);
+  await passes('users');
+  await fails('users', 'read', 'tape GET /api/user/999', 'the tape does not hold it');
+  await fails('users', 'write', 'tape POST /api/save/999', 'the tape does not hold it');
+});
+
 test('a request that only the second run sends fails record and is named, also when the step then fails', async () => {
   let loads = 0;
   pages['/once'] = doc(`<p id="out">?</p>`, `fetch('/api/echo?first=1').then(() => { $('out').textContent = 'done'; });`);
@@ -713,4 +821,118 @@ test('a finding of the tape in the second run fails record also when both runs o
   assert.match(failed.output, /^ {6}step 1: the second run sent GET \/api\/echo, which does not fit the tape of the first run: without the header authorization$/m);
   assert.equal(failed.output.includes('only-in-the-first-run'), false);
   assert.equal(await exists(file('flip')), false);
+});
+
+test('a mutation of the tape that the port cancels at once, leaves out or sends as a beacon fails the step', async () => {
+  await suite('save', '/save', [click('Go')]);
+  const recorded = await record('save');
+  assert.equal(recorded.status, 0, recorded.output);
+  await passes('save');
+  for (const variant of ['abort', 'none']) {
+    await fails('save', variant, /step 2 of 2[\s\S]*tape POST \/api\/save[\s\S]*the page did not send it/);
+  }
+  const beacon = await run('gate', 'save', '--source', 'save', '--url', `${url}/?v=beacon`);
+  assert.equal(beacon.status, 1, beacon.output);
+  assert.match(beacon.output, /tape POST \/api\/save[\s\S]*the page did not send it/);
+});
+
+test('a mutation that only the first run of record sends is named as missing', async () => {
+  let loads = 0;
+  const variants = [`fetch('/api/echo', { method: 'DELETE' }).then(() => { $('out').textContent = 'done'; });`, `$('out').textContent = 'done';`].map(
+    (script) => doc(`<p id="out">?</p>`, script),
+  );
+  Object.defineProperty(pages, '/gone-once', { configurable: true, get: () => variants[loads++ === 0 ? 0 : 1] });
+  await suite('gone-once', '/gone-once', []);
+  const failed = await record('gone-once');
+  assert.equal(failed.status, 1, failed.output);
+  assert.match(failed.output, /^ {6}step 1: the second run did not send DELETE \/api\/echo, which the first run sent$/m);
+});
+
+for (const kind of ['keepalive', 'beacon', 'popup']) {
+  test(`a request that a page sends as it leaves (${kind}) is stopped, fails the gate and is refused by record`, async () => {
+    const steps = kind === 'popup' ? [click('Go')] : [reload];
+    await suite(`leave-${kind}`, '/leave', steps);
+    const clean = await record(`leave-${kind}`);
+    assert.equal(clean.status, 0, clean.output);
+    await passes(`leave-${kind}`);
+    await fails(`leave-${kind}`, kind, /tape POST \/api\/bye[\s\S]*the page sent it past the tape, so it was aborted/);
+    const refusedRun = await record(`leave-${kind}`, kind);
+    assert.equal(refusedRun.status, 1, refusedRun.output);
+    assert.match(refusedRun.output, /step 2, the page sends a request past the tape: POST \/api\/bye$/m);
+    assert.deepEqual(hits.filter((hit) => hit.includes('/api/bye')), []);
+  });
+}
+
+for (const kind of ['popup', 'closing', 'removed', 'popup-worker', 'worker']) {
+  test(`a WebSocket from ${kind} fails the gate and is refused by record`, async () => {
+    await suite(`socket-${kind}`, '/sockets', [click('Go'), advance(1)]);
+    const clean = await record(`socket-${kind}`);
+    assert.equal(clean.status, 0, clean.output);
+    await passes(`socket-${kind}`);
+    off = true;
+    hits = [];
+    const gated = await run('gate', `socket-${kind}`, '--source', `socket-${kind}`, '--url', `${url}/?v=${kind}`);
+    assert.equal(gated.status, 1, gated.output);
+    assert.match(gated.output, /tape WebSocket ws:\/\/127\.0\.0\.1:\d+\/api\/socket/);
+    if (!kind.endsWith('worker')) assert.deepEqual(hits, []);
+    const refusedRun = await record(`socket-${kind}`, kind);
+    assert.equal(refusedRun.status, 1, refusedRun.output);
+    assert.match(refusedRun.output, /step 2, the page opens a WebSocket: ws:\/\/127\.0\.0\.1:\d+\/api\/socket$/m);
+    if (!kind.endsWith('worker')) assert.deepEqual(hits, []);
+  });
+}
+
+test('a redirected PUT stays a PUT after a 302 and is a GET after a 303', async () => {
+  await suite('hops', '/hops', [click('Go')]);
+  const recorded = await record('hops');
+  assert.equal(recorded.status, 0, recorded.output);
+  assert.deepEqual((await tapeOf('hops')).map((entry: any) => JSON.parse(entry.answer.body)), ['PUT x', 'GET ']);
+});
+
+test('a cookie in the answer of a later hop of a redirect is refused', async () => {
+  await suite('hop-cookie', '/hop-cookie', [click('Go')]);
+  const result = await record('hop-cookie');
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /step 2, the answer sets a cookie: GET \/api\/hop-first$/m);
+});
+
+test('a mutation whose answer never reaches the page does not start a new state', { timeout: 60_000 }, async () => {
+  reset();
+  const testCase = await suite('gives-up', '/gives-up', [click('Go')]);
+  const done = await runCase(browser, testCase, new URL(url));
+  assert.equal(done.error, undefined);
+  assert.deepEqual(done.tape.map((entry) => [entry.method, entry.epoch]), [
+    ['POST', 0],
+    ['GET', 0],
+    ['GET', 0],
+  ]);
+});
+
+test('a request that is still held when a run fails never reaches the backend', async () => {
+  reset();
+  const testCase = await suite('held', '/held', [click('Go')]);
+  const done = await runCase(browser, testCase, new URL(url));
+  assert.match(done.error!, /still in flight/);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert.deepEqual(hits, ['GET /api/stream']);
+});
+
+test('a request belongs to the step in which the page sent it, also when the next step lets it go', async () => {
+  reset();
+  const testCase = await suite('while-closing', '/while-closing', [click('Go'), advance(2)]);
+  const unhurried = {
+    newContext: async (options: Parameters<Browser['newContext']>[0]) => {
+      const context = await browser.newContext(options);
+      const cookies = context.cookies.bind(context);
+      context.cookies = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        return cookies();
+      };
+      return context;
+    },
+  } as unknown as Browser;
+  const done = await runCase(unhurried, testCase, new URL(url));
+  assert.equal(done.error, undefined);
+  assert.deepEqual(done.tape.map((entry) => [entry.step, entry.url.query.late?.[0]]), [[2, '1']]);
+  assert.equal(done.steps[1].observation.effects.requests.length, 0);
 });

@@ -188,7 +188,7 @@ test('--redact hides error messages of a broken recording and of a broken case',
   const file = join(root, 'cases', 'marked', 'convention', 'case.json');
   const testCase = await readFile(file, 'utf8');
   try {
-    await writeFile(file, '{"value": zqunquoted}');
+    await writeFile(file, '{"format": "angular-anything/case@1", "zqunquoted": 1}');
     const open = await suite('gate', '--url', port);
     assert.ok(leaks(open.output).length > 0, open.output);
     const { status, output } = await suite('gate', '--url', port, '--redact');
@@ -197,6 +197,32 @@ test('--redact hides error messages of a broken recording and of a broken case',
     assert.deepEqual(leaks(output), [], output);
   } finally {
     await writeFile(file, testCase);
+  }
+});
+
+test('a tape answer without a text body is refused and not printed', async () => {
+  const tape = join(root, 'recordings', 'original', 'typed', 'tape.json');
+  const kept = await readFile(tape, 'utf8');
+  try {
+    for (const broken of [{ body: 918273645 }, { body: ['zqlist'] }, { headers: 'zqheaders' }, { headers: { location: 564738291 } }, { status: 'zqstatus' }]) {
+      const entries = JSON.parse(kept);
+      assert.ok(entries.length > 0);
+      Object.assign(entries[0].answer, broken);
+      await writeFile(tape, JSON.stringify(entries));
+      for (const more of [['--redact'], []]) {
+        const { status, output } = await suite('replay', '--url', original, ...more);
+        assert.equal(status, 1, output);
+        assert.match(output, more.length > 0 ? /cannot replay against the recording: hidden, length \d+/ : /cannot replay against the recording: its tape holds an answer that is not one/);
+        assert.doesNotMatch(output, /TypeError|918273645|564738291|zqlist|zqheaders|zqstatus/);
+      }
+    }
+    const entries = JSON.parse(kept);
+    entries[0].answer = null;
+    await writeFile(tape, JSON.stringify(entries));
+    const aborted = await suite('replay', '--url', original);
+    assert.doesNotMatch(aborted.output, /cannot replay against the recording/);
+  } finally {
+    await writeFile(tape, kept);
   }
 });
 

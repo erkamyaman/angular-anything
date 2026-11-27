@@ -1,5 +1,5 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
-import { join, relative, sep } from 'node:path';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { dirname, join, relative, sep } from 'node:path';
 import { UsageError } from './case.ts';
 import { isPlaceholder } from './value.ts';
 
@@ -20,7 +20,11 @@ const NUMBER = /^-?(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/;
 const TOKENS =
   /((?<!\\)\/\*[^]*?\*\/|<!--[^]*?-->|(?<![:\\])\/\/[^\n]*)|("(?:[^"\\\n]|\\[^])*"|'(?:[^'\\\n]|\\[^])*'|`(?:[^`\\]|\\[^])*`)|(?<![\w$.])(\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?)(?![\w$])/g;
 const QUOTED = /"([^"\n]*)"|'([^'\n]*)'/g;
+const SPANNING = /=\s*(?:"([^"]*\n[^"]*)"|'([^']*\n[^']*)')/g;
 const BETWEEN_TAGS = />([^<>]+)(?=<)/g;
+const TEMPLATE = /\{\{|@(?:if|for|switch|defer|let)\b/;
+const BREAKS = /@(?:if|for|switch|defer)\b[^{}]*\{|@let\s[^;]*;|[{}]/g;
+const PARTS = /[^<>\0]+/g;
 const ACCEPTED = /recorded-literal:[ \t]*(?!-->|\*\/)\S/;
 
 const squeezed = (text: string) => text.replace(/\s+/g, ' ').trim();
@@ -62,7 +66,20 @@ function markup(text: string, from: number): Token[] {
     tokens.push({ value: decoded(value), at });
     if (/["']/.test(value)) tokens.push(...markup(value, at));
   }
+  for (const match of text.matchAll(SPANNING)) {
+    const value = match[1] ?? match[2];
+    tokens.push({ value: decoded(value), at: from + match.index + match[0].search(/["']/) + 1 + value.search(/\S|$/) });
+  }
   return tokens;
+}
+
+function template(text: string, from: number): Token[] {
+  if (!TEMPLATE.test(text)) return [];
+  const cut = text.replace(BREAKS, (part) => part.replace(/[^\n]/g, '\0'));
+  return [...cut.matchAll(PARTS)].map((match) => ({
+    value: decoded(unescaped(match[0])),
+    at: from + match.index + match[0].search(/\S|$/),
+  }));
 }
 
 function scan(text: string, file: string): { tokens: Token[]; code: string } {
@@ -71,13 +88,13 @@ function scan(text: string, file: string): { tokens: Token[]; code: string } {
   const code = text.replace(html ? /<!--[^]*?-->/g : TOKENS, (whole: string, comment?: string | number, string?: string, number?: string, at?: number) => {
     if (html || typeof comment === 'string') return whole.replace(/[^\n]/g, ' ');
     if (string !== undefined) {
-      tokens.push({ value: unescaped(string.slice(1, -1)), at: at! });
+      tokens.push({ value: unescaped(string.slice(1, -1)), at: at! }, ...template(string.slice(1, -1), at! + 1));
     } else if (number !== undefined) {
       tokens.push({ value: number, at: at! });
     }
     return whole;
   });
-  tokens.push(...markup(code, 0));
+  tokens.push(...markup(code, 0), ...(/\.(html|svg|vue)$/.test(file) ? template(code, 0) : []));
   return { tokens, code };
 }
 
@@ -98,6 +115,18 @@ async function filesBelow(flag: string, directory: string): Promise<{ file: stri
   };
   await walk(directory);
   return files.sort((a, b) => (a.file < b.file ? -1 : 1));
+}
+
+async function holds(outer: string, inner: string): Promise<boolean> {
+  const wanted = await stat(outer).catch(() => undefined);
+  let at = await realpath(inner).catch(() => undefined);
+  if (!wanted || at === undefined) return false;
+  for (;;) {
+    const { dev, ino } = await stat(at);
+    if (dev === wanted.dev && ino === wanted.ino) return true;
+    if (dirname(at) === at) return false;
+    at = dirname(at);
+  }
 }
 
 function collect(value: unknown, keys: Set<string>): void {
@@ -130,23 +159,29 @@ async function recordedKeys(recorded: string, ids: string[]): Promise<Set<string
 }
 
 export async function checkLiterals({
-  recorded,
+  recordings,
   ids,
   source,
   originalSource,
   portSource,
-}: Sources & { recorded: string; ids: string[]; source: string }): Promise<LiteralCheck> {
+}: Sources & { recordings: string; ids: string[]; source: string }): Promise<LiteralCheck> {
   const original = await filesBelow('--original-source', originalSource);
   if (original.length === 0) throw new UsageError(`--original-source ${originalSource} holds no file`);
   const port = (await filesBelow('--port-source', portSource)).filter(({ file }) => SOURCE.test(file));
   if (port.length === 0) throw new UsageError(`--port-source ${portSource} holds no source file`);
+  if (await holds(originalSource, portSource)) {
+    throw new UsageError(`--original-source ${originalSource} holds the port source, so no literal of the port could be found`);
+  }
+  if ((await holds(originalSource, recordings)) || (await holds(recordings, originalSource))) {
+    throw new UsageError(`--original-source ${originalSource} holds the recordings or is inside them, so no recorded value could be found`);
+  }
 
   const known = new Set<string | undefined>();
   for (const { file, text } of original) for (const { value } of scan(text, file).tokens) known.add(keyOf(value));
   const inOriginal = (value: string) =>
     original.some(({ text }) => [value, squeezed(value), JSON.stringify(value).slice(1, -1)].some((form) => text.includes(form)));
 
-  const keys = await recordedKeys(recorded, ids);
+  const keys = await recordedKeys(join(recordings, source), ids);
   const found = new Map<string, Literal>();
   const named: LiteralCheck['named'] = [];
   const names = new RegExp(`(?<![\\w.-])(?:recording|tape|lock)\\.json(?![\\w-])|recordings[\\\\/]${source}(?![\\w-])`, 'g');
