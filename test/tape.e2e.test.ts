@@ -107,6 +107,66 @@ on('go', async () => {
   for (const name of ['first', 'second']) fetch('/api/late?name=' + name).then((r) => r.text()).then((text) => { $('out').textContent = text; });
 });`,
   ),
+  '/burst': doc(
+    `<p id="out">?</p><button id="go">Go</button><iframe id="frame" title="Frame"></iframe>`,
+    `if (v === 'replaced') {
+  const real = window.fetch.bind(window);
+  window.fetch = (...args) => real(...args);
+}
+const answers = [];
+const said = (name, text) => { answers.push(name + '=' + text); $('out').textContent = answers.join(' '); };
+const send = (name, init, from = window) => from.fetch('/api/who?n=' + name, init).then((r) => r.json()).then((text) => said(name, text));
+const viaXhr = (name, method, body) => {
+  const xhr = new XMLHttpRequest();
+  xhr.open(method, '/api/who?n=' + name);
+  xhr.onload = () => said(name, JSON.parse(xhr.responseText));
+  xhr.send(body);
+};
+on('go', () => {
+  send('a');
+  send('b', { method: 'POST', body: 'two' });
+  viaXhr('c', 'GET');
+  viaXhr('d', 'POST', 'four');
+  send('e', { method: 'POST', body: new Blob(['five']) });
+  send('f', { keepalive: true });
+  send('g', { method: 'POST', body: 'seven', keepalive: true });
+  navigator.sendBeacon('/api/who?n=beacon', 'eight');
+  send('h');
+  send('same', { method: 'POST', body: 'first' });
+  send('same', { method: 'POST', body: 'second' });
+  send('who', { headers: { 'x-who': 'one' } });
+  send('who', { headers: { 'x-who': 'two', authorization: 'Bearer whovalue' } });
+  send('who', { headers: { 'x-who': 'three' } });
+  send('i', {}, $('frame').contentWindow);
+  send('j', { method: 'DELETE' });
+  const form = new FormData();
+  form.set('field', 'text');
+  form.set('file', new File(['abc'], 'a.txt'));
+  fetch('/api/echo?n=l', { method: 'POST', body: form }).then((r) => r.json()).then((text) => said('l', text));
+  send('k');
+  if (v === 'dialog') alert('sent');
+});`,
+  ),
+  '/dropped': doc(
+    `<p id="out">?</p><button id="go">Go</button>`,
+    `on('go', async () => {
+  const early = new AbortController();
+  const sent = [fetch('/api/echo?n=aborted', { signal: early.signal }).catch(() => 'aborted')];
+  early.abort();
+  const stopped = new XMLHttpRequest();
+  stopped.open('POST', '/api/echo?n=stopped');
+  stopped.send('x');
+  stopped.abort();
+  const frame = document.body.appendChild(document.createElement('iframe'));
+  frame.contentWindow.fetch('/api/echo?n=removed').catch(() => {});
+  frame.remove();
+  sent.push(fetch('data:text/plain,data').then((r) => r.text()));
+  sent.push(fetch('http://[bad/').catch(() => 'bad'));
+  sent.push(fetch('/api/echo?n=kept', { method: 'POST' }).then((r) => r.json()));
+  sent.push(fetch('/api/echo?n=last').then((r) => r.json()));
+  $('out').textContent = (await Promise.all(sent)).join(' ');
+});`,
+  ),
   '/write': doc(
     `<p id="out">?</p><button id="go">Go</button>`,
     `on('go', async () => {
@@ -168,6 +228,7 @@ function api(request: IncomingMessage, response: ServerResponse) {
     if (pathname === '/api/items' && request.method === 'POST') return void json(items.push(JSON.parse(Buffer.concat(chunks).toString()).title), 201);
     if (pathname === '/api/items') return void json(items);
     if (pathname.startsWith('/api/items/')) return void json(items.shift());
+    if (pathname === '/api/who') return void json(`${request.headers['x-who'] ?? ''}${Buffer.concat(chunks)}`);
     if (pathname === '/api/count') return void json(items.length);
     if (pathname === '/api/job') return void json(['waiting', 'running', 'done'][job]);
     if (pathname === '/api/job/advance') return void json(++job);
@@ -411,6 +472,47 @@ test('two answers reach the page in the order of the requests, whatever the serv
   assert.equal(roots.size, 1);
   assert.match(await readFile(file('order', '02.json'), 'utf8'), /"second"|\\"second\\"/);
   await passes('order');
+});
+
+const burst = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'same', 'same', 'who', 'who', 'who', 'i', 'j', 'l', 'k'];
+const said = ['a=', 'b=two', 'c=', 'd=four', 'e=five', 'f=', 'g=seven', 'h=', 'same=first', 'same=second', 'who=one', 'who=two', 'who=three', 'i=', 'j=', 'l=echo', 'k='];
+
+test('requests sent in one task are answered, taped and compared in the order in which the page sent them', async () => {
+  await suite('burst', '/burst', [click('Go')]);
+  for (const variant of ['', 'dialog', 'replaced']) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const recorded = await record('burst', variant);
+      assert.equal(recorded.status, 0, `${variant}\n${recorded.output}`);
+      const tape = await tapeOf('burst');
+      assert.deepEqual(tape.map((entry: any) => entry.url.query.n[0]), burst, variant);
+      assert.deepEqual(tape.map((entry: any) => entry.epoch), [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 6, 6, 6, 6, 6, 7, 8], variant);
+      assert.deepEqual(tape.slice(10, 13).map((entry: any) => entry.credentials), [[], ['authorization'], []], variant);
+      const observation = JSON.parse(await readFile(file('burst', '02.json'), 'utf8'));
+      assert.ok(JSON.stringify(observation.dom).includes(said.join(' ')), `${variant}\n${JSON.stringify(observation.dom)}`);
+      assert.deepEqual(
+        observation.effects.requests.map((request: any) => request.url.query.n[0]),
+        ['b', 'd', 'e', 'g', 'beacon', 'same', 'same', 'j', 'l'],
+        variant,
+      );
+    }
+    const at = variant ? `${url}/?v=${variant}` : url;
+    for (const more of [[], ['--original-url', at]]) {
+      off = true;
+      hits = [];
+      const gated = await run('gate', 'burst', '--source', 'burst', '--url', at, ...more);
+      assert.equal(gated.status, 0, `${variant}\n${gated.output}`);
+      assert.deepEqual(hits.filter((hit) => !hit.includes('n=beacon')), [], variant);
+    }
+  }
+});
+
+test('requests that the page cancels, and sends that never become a request, do not hold up the ones sent after them', async () => {
+  await suite('dropped', '/dropped', [click('Go')]);
+  const recorded = await record('dropped');
+  assert.equal(recorded.status, 0, recorded.output);
+  assert.deepEqual((await tapeOf('dropped')).map((entry: any) => entry.url.query.n[0]), ['kept', 'last']);
+  assert.match(await readFile(file('dropped', '02.json'), 'utf8'), /aborted data bad echo echo/);
+  await passes('dropped');
 });
 
 test('a read sent together with a mutation is recorded after it, and a port that waits for the mutation passes', async () => {

@@ -509,6 +509,42 @@ test('a request that comes after the window has closed gets a window of its own'
   await second;
 });
 
+test('the request that was sent first is let go first, also when the runner hears of it later', async () => {
+  const { log, requests, released } = fakeLog('second', 'first');
+  log.order = { sorted: async (list) => list, next: async () => requests[1] };
+  const waiting = idle(log, base);
+  await later(40, () => {});
+  assert.deepEqual(released, ['first']);
+  log.inFlight.delete(requests[1]);
+  await waiting;
+});
+
+test('a request that is chosen before the runner holds it is let go when it is held', async () => {
+  const { log, requests, released } = fakeLog('a');
+  const hold = log.held.get(requests[0])!;
+  log.held.delete(requests[0]);
+  const waiting = idle(log, base, 600);
+  await later(40, () => log.held.set(requests[0], hold));
+  await later(40, () => {});
+  assert.deepEqual(released, ['a']);
+  log.inFlight.delete(requests[0]);
+  await waiting;
+});
+
+test('a request that came while the first one was looked for, and does not end, is named', async () => {
+  const { log, requests } = fakeLog('b');
+  const early = fakeRequest('a');
+  log.order = {
+    sorted: async (list) => list,
+    async next() {
+      log.inFlight.delete(requests[0]);
+      log.inFlight.add(early);
+      return early;
+    },
+  };
+  await assert.rejects(idle(log, base, 100), /^Error: 1 requests still in flight after 100 ms, the first: GET \/api\/a$/);
+});
+
 test('a page with 12 answers one after another comes to rest', async () => {
   const twelve = world({ inFlight: 1, requestEvents: 1 });
   let answers = 0;

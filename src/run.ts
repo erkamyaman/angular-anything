@@ -20,6 +20,8 @@ import type { Due, Unread } from './page.ts';
 import { bodyParts, storageValue, urlParts } from './parts.ts';
 import type { UrlParts } from './parts.ts';
 import { compile } from './noise.ts';
+import { sendOrder } from './order.ts';
+import type { SendOrder } from './order.ts';
 import { addCredential, addRequest, addSetCookie } from './secrets.ts';
 import type { Seen } from './secrets.ts';
 import { ANSWER_HEADERS, CREDENTIAL_HEADERS, isMutation, player } from './tape.ts';
@@ -68,6 +70,7 @@ export type Log = {
   waiting: string;
   observations: number;
   window?: { deadline: number; members: Set<Request> };
+  order?: SendOrder;
 };
 
 type Observed = { observation: Observation; unread: Unread; secretFields?: string[]; seen: { events: number; requests: number; popups: number } };
@@ -157,7 +160,8 @@ async function observe(page: Page, base: URL, log: Log): Promise<Observed> {
   const captured = await page.evaluate(capturePage);
   const events = log.events.slice();
   const popups = log.popups.slice();
-  const requests = log.requests.slice();
+  const arrived = log.requests.slice();
+  const requests = log.order ? await log.order.sorted(arrived) : arrived;
   const pageUrl = new URL(captured.href);
   for (const [key, value] of base.searchParams) pageUrl.searchParams.delete(key, value);
   const reads = new Map<string, UrlParts>();
@@ -446,14 +450,15 @@ export async function idle(log: Log, base: URL, waitMs = WAIT_TIMEOUT_MS): Promi
     log.window = { deadline: Date.now() + waitMs, members: new Set(log.inFlight) };
   }
   const { deadline, members } = log.window;
-  const next = [...log.inFlight][0];
+  const next = log.order ? await log.order.next(log.requests, log.inFlight) : [...log.inFlight][0];
   if (next === undefined) return;
-  if (log.held.has(next)) {
-    log.sent.add(next);
-    log.held.get(next)?.();
-    log.held.delete(next);
-  }
+  members.add(next);
   while (log.inFlight.has(next)) {
+    if (log.held.has(next)) {
+      log.sent.add(next);
+      log.held.get(next)?.();
+      log.held.delete(next);
+    }
     log.waiting = `the answer to ${named(next, base)}`;
     if (Date.now() > deadline) {
       const left = [...members].filter((request) => log.inFlight.has(request));
@@ -773,6 +778,7 @@ export async function runCase(
     });
     const session = await context.newCDPSession(page);
     await session.send('Page.setFontFamilies', { fontFamilies: { standard: 'Times New Roman' } });
+    log.order = await sendOrder(session);
     page.on('websocket', (socket) => {
       const url = new URL(socket.url());
       const name = `WebSocket ${url.protocol}//${url.host}${url.pathname}`;
