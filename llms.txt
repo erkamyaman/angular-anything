@@ -1,6 +1,6 @@
 # Angular Anything
 
-> Move a React, Vue or AngularJS app to modern Angular, and prove it still behaves the same. The tool records the original in Chromium and fails the Angular port on any difference it compares. It does not write the port: you do.
+> Move a React, Vue or AngularJS app or library to modern Angular, and prove it still behaves the same. The tool records the original in Chromium and fails the Angular port on any difference it compares. It does not write the port: you do.
 
 Status: early. Not on npm. Tested on macOS only. Read https://github.com/erkamyaman/angular-anything/blob/main/docs/reference.md before relying on it.
 
@@ -56,7 +56,7 @@ Actions: `goto`, `click`, `dblclick`, `hover`, `check`, `uncheck`, `fill`, `pres
 ## Porting workflow
 
 1. Start the original app and its backend with test data. `record` sends real requests to it, writes included, and does not reset it.
-2. Write cases for what users do. Start small.
+2. Write the cases yourself, do not wait for the user to describe them. Read the routes, forms, buttons and requests in the code, use the running app, and write one case per thing a user can do, including empty, error and reload states. Start small, then tell the user which flows are covered and which are not.
 3. Run `aa record`. If it refuses (the two runs differ, a secret is found, the page does something the tape cannot hold), read the message and the reference. Do not remove a check to make it pass.
 4. Port the app to Angular. Mount each component on an element the original already has, so that no wrapper element or extra attribute appears (reference, "Choosing the selector of a component in the Angular port").
 5. Start the port and run `aa gate`. Fix the port, not the recording, until it exits 0.

@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-Move your app to Angular, and prove it still behaves the same.
+Move your app or library to Angular, and prove it still behaves the same.
 </p>
 
 <p align="center">
@@ -90,21 +90,16 @@ pnpm aa gate fixture --source react --url 'http://localhost:4104/?bug=aria'    #
 
 ## How it works
 
-```mermaid
-flowchart LR
-  cases["Cases<br/>what users do"] --> record["record<br/>runs the original twice"]
-  original["Original app<br/>React, Vue, AngularJS"] --> record
-  record --> lock[("Locked recording")]
-  lock --> gate["gate<br/>replays every case"]
-  port["Angular port<br/>you or your agent"] --> gate
-  gate -->|any difference| fix["Fix the port"]
-  fix --> port
-  gate -->|everything matches| done(["Done"])
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
+    <img src="docs/assets/how-it-works-light.svg" width="880" alt="record runs each case twice on the original and locks the recording; gate replays every case against the Angular port, which you fix until everything matches">
+  </picture>
+</p>
 
-1. **Describe** what users do, as short cases ([an example](https://github.com/erkamyaman/angular-anything/blob/main/cases/fixture/add-task/case.json)).
+1. **Find the cases.** Your agent reads the app and writes down what users do, as short [cases](https://github.com/erkamyaman/angular-anything/blob/main/cases/fixture/add-task/case.json). You can add your own.
 2. **Record** the original (React, Vue or AngularJS). `record` runs each case twice and locks what happened.
-3. **Port** it to Angular, by hand or with your coding agent. This tool does not write the port.
+3. **Port.** Your agent rewrites the app in Angular (or you do). The tool checks the work, it does not write it.
 4. **Gate** the port. It replays every case and fails on any difference.
 
 **What is compared.** After each step: the accessibility tree, the DOM, computed styles, events, requests that change data, `localStorage`, the URL, the title, focus, dialogs and windows. Sizes and positions are compared when the original runs alongside. Screenshots are reported and never fail the gate.

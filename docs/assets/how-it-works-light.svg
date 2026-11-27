@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 232" width="880" height="232" role="img" aria-label="How it works" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8c959f"/></marker></defs>
+<rect x="10" y="24" width="160" height="64" rx="10" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="90.0" y="52" text-anchor="middle" font-size="16" font-weight="600" fill="#1f2328">Cases</text>
+<text x="90.0" y="72" text-anchor="middle" font-size="12.5" fill="#59636e">what users do</text>
+<rect x="240" y="24" width="170" height="64" rx="10" fill="#ffffff" stroke="#c3002f" stroke-width="1.5"/>
+<text x="325.0" y="52" text-anchor="middle" font-size="16" font-weight="600" fill="#1f2328">record</text>
+<text x="325.0" y="72" text-anchor="middle" font-size="12.5" fill="#59636e">runs the original twice</text>
+<rect x="240" y="154" width="170" height="64" rx="10" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="325.0" y="182" text-anchor="middle" font-size="16" font-weight="600" fill="#1f2328">Original app</text>
+<text x="325.0" y="202" text-anchor="middle" font-size="12.5" fill="#59636e">React, Vue, AngularJS</text>
+<rect x="480" y="24" width="150" height="64" rx="10" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="555.0" y="52" text-anchor="middle" font-size="16" font-weight="600" fill="#1f2328">Recording</text>
+<text x="555.0" y="72" text-anchor="middle" font-size="12.5" fill="#59636e">locked</text>
+<rect x="700" y="24" width="170" height="64" rx="10" fill="#ffffff" stroke="#c3002f" stroke-width="1.5"/>
+<text x="785.0" y="52" text-anchor="middle" font-size="16" font-weight="600" fill="#1f2328">gate</text>
+<text x="785.0" y="72" text-anchor="middle" font-size="12.5" fill="#59636e">replays every case</text>
+<rect x="700" y="154" width="170" height="64" rx="10" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="785.0" y="182" text-anchor="middle" font-size="16" font-weight="600" fill="#1f2328">Angular port</text>
+<text x="785.0" y="202" text-anchor="middle" font-size="12.5" fill="#59636e">you or your agent</text>
+<rect x="480" y="154" width="150" height="64" rx="10" fill="#ffffff" stroke="#1a7f37" stroke-width="1.5"/>
+<text x="555.0" y="182" text-anchor="middle" font-size="16" font-weight="600" fill="#1f2328">Done</text>
+<text x="555.0" y="202" text-anchor="middle" font-size="12.5" fill="#59636e">everything matches</text>
+<path d="M170 56H238" fill="none" stroke="#8c959f" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M325 154V90" fill="none" stroke="#8c959f" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M410 56H478" fill="none" stroke="#8c959f" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M630 56H698" fill="none" stroke="#8c959f" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M755 154V90" fill="none" stroke="#8c959f" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M815 88V152" fill="none" stroke="#8c959f" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="747" y="126" text-anchor="end" font-size="12" fill="#59636e">replay</text>
+<text x="823" y="126" text-anchor="start" font-size="12" fill="#59636e">differs</text>
+<path d="M720 88L612 152" fill="none" stroke="#8c959f" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="640" y="112" text-anchor="end" font-size="12" fill="#59636e">matches</text>
+</svg>
