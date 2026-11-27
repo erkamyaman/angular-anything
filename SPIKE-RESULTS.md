@@ -1,6 +1,6 @@
 # Spike results, milestone 1
 
-Measured on 2026-11-21 between 03:07 and 05:27 local time, on one machine, after the review of this milestone and with the code as it is now. Every number below comes from a command that was run for this file. Where a number describes the code before the review, the sentence says so. Nothing is estimated unless the sentence says so. A second review ran later the same day. What it measured is in the section "Second review, after the fix pass", which also lists the sentences of this file that it corrected.
+Measured on 2026-11-21 between 03:07 and 05:27 local time, on one machine, after the review of this milestone and with the code as it is now. Every number below comes from a command that was run for this file. Where a number describes the code before the review, the sentence says so. Nothing is estimated unless the sentence says so. A second review ran later the same day. What it measured is in the section "Second review, after the fix pass", which also lists the sentences of this file that it corrected. "The planning notes" and paths under `planning/` mean private notes that are not part of this repository.
 
 ## Verdict
 

@@ -8,7 +8,7 @@ import { audit, compile, maskObservations, normalize } from './noise.ts';
 import { measure, stored as storedLayers } from './layout.ts';
 import { launchBrowser, runCase } from './run.ts';
 import { describeFinding, isAccepted, isSecret, kindsOf, newSeen, scanCase, scanUrl } from './secrets.ts';
-import type { Finding as Secret } from './secrets.ts';
+import type { Finding as Secret, Scanned } from './secrets.ts';
 import { agreedTape, maskRequest } from './tape.ts';
 import type { Finding } from './tape.ts';
 import { hider } from './typed.ts';
@@ -63,6 +63,17 @@ export async function record({ root, suite, source, url }: Options): Promise<num
   const hide = hider(cases.map((loaded) => loaded.case));
   const say = (lines: string[]) => console.log(lines.map(hide).join('\n'));
   const browser = await launchBrowser();
+  let recorded = 0;
+  const held: { id: string; directory: string; scans: Scanned[]; accept: NonNullable<(typeof cases)[number]['case']['accept']> }[] = [];
+  const recheck = async () => {
+    for (const { id, directory, scans, accept } of recorded === 0 ? [] : held.splice(0)) {
+      const secrets = scans.flatMap(scanCase).filter((each) => !isAccepted(each, accept));
+      if (secrets.length === 0) continue;
+      await rm(directory, { recursive: true, force: true });
+      recorded--;
+      say(refusal(id, secrets));
+    }
+  };
   try {
     const pins = versions(browser);
     const stored = join(root, 'recordings', source);
@@ -85,7 +96,7 @@ export async function record({ root, suite, source, url }: Options): Promise<num
     const address = `${url.origin}/${url.search === '' ? '' : ' (its query is not shown)'}`;
     console.log(`angular-anything record: suite ${suite}, source ${source}, url ${address}`);
     console.log(`Playwright ${pins.playwright}, ${pins.browser}\n`);
-    let recorded = 0;
+    const credentials = new Set<string>();
     if (cases.length === 0) console.log(`FAIL  the suite ${suite} has no cases`);
     const known = new Set(cases.map((loaded) => loaded.case.id));
     for (const entry of cases.length === 0 ? [] : await readdir(stored, { withFileTypes: true }).catch(() => [])) {
@@ -108,7 +119,7 @@ export async function record({ root, suite, source, url }: Options): Promise<num
         continue;
       }
       await rm(directory, { recursive: true, force: true });
-      const seen = newSeen();
+      const seen = { ...newSeen(), credentials };
       const run = (replayed?: Parameters<typeof runCase>[6]) =>
         runCase(browser, testCase, url, undefined, undefined, undefined, replayed, seen);
       const noise = compile(testCase.noise ?? []);
@@ -125,13 +136,18 @@ export async function record({ root, suite, source, url }: Options): Promise<num
       const read = (done: typeof first) => done.steps.map((step) => normalize(measure(step.observation, measured, matched), noise));
       const left = read(first);
       const written = maskObservations(noise, left, left).observations.map(storedLayers);
-      const found = scanCase({ seen, observations: written, fields: first.steps.map((step) => step.secretFields), tape: first.tape, noise });
+      const scanned = { seen, observations: written, fields: first.steps.map((step) => step.secretFields), tape: first.tape, noise };
+      const found = scanCase(scanned);
       const inUrl = scanUrl(url, seen);
       const accepted = found.filter((each) => isAccepted(each, testCase.accept ?? []));
       const secrets = [...inUrl, ...found.filter((each) => !accepted.includes(each))];
+      const named = new Set(secrets.flatMap((each) => each.text ?? []));
       const report = (lines: string[]) => {
         for (const line of lines) {
-          const kinds = kindsOf(line, seen.credentials);
+          const kinds = [
+            ...kindsOf(line, seen.credentials),
+            ...(kindsOf(line, named).includes('credential') ? ['named-value'] : []),
+          ];
           console.log(`      ${kinds.length > 0 ? `a line is left out, it holds a detected secret: ${kinds.join(', ')}` : hide(line)}`);
         }
       };
@@ -208,15 +224,17 @@ export async function record({ root, suite, source, url }: Options): Promise<num
       await writeFile(join(directory, RECORDING_FILE), toJson(recording));
       const lock = await writeLock(directory, { ...pins, case: sha256 });
       recorded++;
+      held.push({ id: testCase.id, directory, scans: [scanned, { ...scanned, observations: [], fields: [], tape, noise: [] }], accept: testCase.accept ?? [] });
       console.log(`ok    ${testCase.id}  steps: ${first.steps.length}, frames: ${recording.frames.join(' ')}, masked: ${masked}, root: ${lock.root}`);
       for (const line of new Set(accepted.map(describeFinding))) say([`      accepted: ${line}`]);
       noise.forEach((entry, at) => console.log(`      noise ${entry.layer} ${hide(entry.path)}: ${counts[at]} values masked`));
       for (const entry of audited.agreed) say([`      noise entry without a difference between the two runs: ${entry.layer} ${entry.path}`]);
       if (screenshotNoise.length > 0) console.log(`      screenshots that differed between the two runs, at step ${screenshotNoise.join(', ')}`);
     }
+    await recheck();
     console.log(`\nRecorded ${recorded} of ${cases.length} cases into ${join('recordings', source)}.`);
     return cases.length > 0 && recorded === cases.length ? 0 : 1;
   } finally {
-    await browser.close();
+    await recheck().finally(() => browser.close());
   }
 }

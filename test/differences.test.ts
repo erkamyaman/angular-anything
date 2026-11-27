@@ -116,6 +116,12 @@ test('an index inside a quoted key is not collapsed, and more cases rank before 
   assert.deepEqual(often.differences.map((group) => group.path), ['title', 'focus']);
 });
 
+test('the indices of a tape path name different requests and are not collapsed', () => {
+  const paths = ['tape GET /api/search?f[0]=name', 'tape GET /api/search?f[1]=owner'];
+  const grouped = distinct(paths.map((path) => found('one', 1, 'effects', path)));
+  assert.deepEqual(grouped.differences.map((group) => group.path).sort(), paths);
+});
+
 const report = (differences: Found[]): Report => {
   const step = stepReport(1, 'goto /', timing, 'identical', layers({ dom: [{ path: 'html[1].attrs.lang', expected: 'en-US', actual: 'en-GB' }] }));
   return finish({

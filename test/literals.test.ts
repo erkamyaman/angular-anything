@@ -245,3 +245,103 @@ test('a recorded negative number is found by its digits, the other entities are 
   ]);
   assert.deepEqual((await check({ 'a.html': '<i data-from="..\\recordings\\react"></i>' })).named.map((each) => each.name), ['recordings\\react']);
 });
+
+test('a branch of an ICU message counts in a template without an interpolation or a block', async () => {
+  for (const kind of ['plural', 'select', 'selectordinal']) {
+    const template = three.map((text) => `<p>{n, ${kind}, =0 {${text}} other {x}}</p>`).join('\n');
+    assert.deepEqual(await found({ 'a.html': template }), [...three].sort(), kind);
+    assert.deepEqual(await found({ 'a.ts': `@Component({ template: \`\n${template}\n\` })` }), [...three].sort(), `${kind}, inline`);
+  }
+  assert.deepEqual(await found({ 'a.html': '<p i18n>{n, plural,\n  =0 {\n    Call the bank\n  }\n}</p>' }), ['Call the bank']);
+});
+
+test('a copy of recordings anywhere in the original source excuses nothing', async () => {
+  const port = { 'a.ts': strings(...three) };
+  const step = JSON.stringify({ dom: { tag: 'html', children: values.map((value) => ({ tag: 'p', children: [value] })) } });
+  const recorded = await tree({ 'react/one/01.json': step, 'react/one/tape.json': '[]', 'vue/two/01.json': JSON.stringify(three) });
+  const run = async (original: Record<string, string>) =>
+    (await checkLiterals({ recordings: recorded, ids: ['one'], source: 'react', originalSource: await tree(original), portSource: await tree(port) })).found.length;
+  assert.equal(await run({ 'app.js': 'x', 'backup/old/01.json': step }), 3);
+  assert.equal(await run({ 'app.js': 'x', 'src/data.txt': JSON.stringify(JSON.parse(step), null, 4) }), 3);
+  assert.equal(await run({ 'app.js': 'x', 'src/other.json': JSON.stringify(three, null, 2) }), 3);
+  assert.equal(await run({ 'app.js': 'x', 'src/data.json': JSON.stringify([...three, 'more']) }), 0);
+});
+
+test('named and numbered entities are read in the port and in the original', async () => {
+  const texts = ['Price is 5 € today…', 'Terms © Acme Café', 'Don’t forget “it” – ever', "What's next today?", 'Fish & chips daily'];
+  const recorded = await tree({ 'react/one/01.json': JSON.stringify(texts) });
+  const run = async (port: Record<string, string>, original: Record<string, string>) =>
+    (await checkLiterals({ recordings: recorded, ids: ['one'], source: 'react', originalSource: await tree(original), portSource: await tree(port) })).found.map((each) => each.value).sort();
+  const written = [
+    'Price is 5 &euro; today&hellip;',
+    'Terms &copy; Acme Caf&eacute;',
+    'Don&rsquo;t forget &ldquo;it&rdquo; &ndash; ever',
+    'What&apos;s next today?',
+    'Fish &#38; chips daily',
+  ];
+  const numbered = ['Price is 5 &#8364; today&#x2026;', 'Terms &#xA9; Acme Caf&#233;', 'Don&#x2019;t forget &#X201C;it&#8221; &#8211; ever', 'What&#x27;s next today?', 'Fish &amp; chips daily'];
+  const plain = { 'a.ts': texts.map((text) => `f(${JSON.stringify(text)});`).join('\n') };
+  for (const list of [written, numbered]) {
+    const markup = list.map((text) => `<p>${text}</p>`).join('');
+    assert.deepEqual(await run({ 'a.html': markup }, { 'app.js': 'x' }), [...texts].sort());
+    assert.deepEqual(await run(plain, { 'App.tsx': `<>${markup}</>` }), []);
+    assert.deepEqual(await run(plain, { 'notes.txt': list.map((text) => `x ${text} x`).join('\n') }), []);
+  }
+  assert.deepEqual(await run({ 'a.html': '<p>&unknown; &#99999999; text</p>' }, { 'app.js': 'x' }), []);
+});
+
+test('what only looks like a comment hides no literal', async () => {
+  const lines = (form: (text: string) => string) => three.map(form).join('\n');
+  const quoted = lines((text) => `const v = '${text}';`);
+  const forms: Record<string, Record<string, string>> = {
+    'a block opener in a regular expression': { 'a.ts': `const r = /[/*]/g;\n${quoted}\n/* end */` },
+    'a line opener in a regular expression': { 'a.ts': lines((text) => `split(/[//]/, '${text}');`) },
+    'a backtick in a regular expression': { 'a.ts': `x = a.replace(/\`/g, '');\n${quoted}\n// \`` },
+    'a quote in a regular expression': { 'a.ts': lines((text) => `x = a.replace(/'/g, '${text}');`) },
+    'a regular expression after return': { 'a.js': lines((text) => `return /[/*]/.test('${text}'); /* x */`) },
+    'a regular expression after an arrow': { 'a.js': `f((a) => /[/*]/.test(a));\n${quoted}\n/* end */` },
+    'a regular expression on its own line': { 'a.js': `x =\n  /[/*]/;\n${quoted}\n/* end */` },
+    'a url in a style sheet': { 'a.css': lines((text) => `a { b: url(//x/y); content: '${text}'; }`) },
+    'two slashes in a style sheet': { 'a.css': lines((text) => `a { b: x //y; content: '${text}'; }`) },
+    'a url in SCSS': { 'a.scss': lines((text) => `a { b: url(//x/y); content: '${text}'; }`) },
+    'slashes in the text of a Vue template': { 'a.vue': lines((text) => `<p>and // or</p><p>${text}</p>`) },
+    'slashes in the text of JSX': { 'a.tsx': lines((text) => `const a = <><p>and // or</p><p>${text}</p></>;`) },
+    'a block opener in the text of a template': { 'a.svelte': `<p>image/*</p>\n${lines((text) => `<p>${text}</p>`)}\n<p>*/</p>` },
+  };
+  for (const [name, port] of Object.entries(forms)) assert.deepEqual(await found(port), [...three].sort(), name);
+  const comments = {
+    'a.ts': "const x = a / 2; // 'Call the bank'\nconst y = f(b > c); // </p> 'Water the plants'\nf(/x/); /* 'Buy more milk' */",
+    'a.tsx': "const a = <p>x</p>; // 'Call the bank'\nconst b = (c) => { /* 'Water the plants' */ return <p>{/* 'Buy more milk' */}</p>; };",
+    'a.scss': "a { } // 'Call the bank'",
+    'b.tsx': "const c = a > b // 'Water the plants'",
+  };
+  assert.deepEqual(await found(comments), []);
+});
+
+test('recorded-literal counts only in a comment', async () => {
+  const port = { 'a.ts': "const d = ['recorded-literal: x', 'Call the bank', 'Water the plants', 'Buy more milk'];" };
+  assert.deepEqual(await found(port), [...three].sort());
+  assert.deepEqual(await found({ 'a.html': three.map((text) => `<p title="recorded-literal: x">${text}</p>`).join('\n') }), [...three].sort());
+  const accepted = {
+    'a.ts': "const a = 'Call the bank'; /* recorded-literal: kept\n */ const b = 'Water the plants'; // recorded-literal: fixed\n@Component({ template: `<p>Buy more milk</p> <!-- recorded-literal: fixed -->` })",
+    'a.tsx': "const c = <p>Feed the cat now</p>; {/* recorded-literal: fixed */}",
+    'a.css': "a { content: 'He said \"no\" twice'; } /* recorded-literal: fixed */",
+  };
+  assert.deepEqual(await found(accepted), []);
+});
+
+test('a division after a non-null mark or at the start of a line hides no comment', async () => {
+  const port = {
+    'a.ts': [
+      "const a = this.width! / 2; // 'Call the bank'",
+      "const b = this.width! / 2; /* 'Water the plants' */",
+      'const c = total',
+      "  / 2; // 'Buy more milk'",
+      'const d = total',
+      "  / 2; /* 'Feed the cat now' */",
+    ].join('\n'),
+  };
+  assert.deepEqual(await found(port), []);
+  const marked = three.map((text) => `const x = this.width! / 2 + '${text}'; // recorded-literal: fixed`).join('\n');
+  assert.deepEqual(await found({ 'a.ts': marked }), []);
+});

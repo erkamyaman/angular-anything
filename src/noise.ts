@@ -6,7 +6,7 @@ import type { Matcher, Token } from './path.ts';
 import { kindOf, maskable, nodesOf, placeholder, walkLayer } from './value.ts';
 import type { Kind } from './value.ts';
 
-export type Noise = { layer: Layer; path: string };
+export type Noise = { layer: Layer; path: string; keep?: false };
 export type Entry = Noise & { matcher: Matcher };
 
 const key = (token: Token | undefined): token is { key: string } => typeof token === 'object' && 'key' in token;
@@ -118,9 +118,9 @@ export function parseNoise(value: unknown): Noise[] {
   return value.map((entry, at) => {
     const where = `noise entry ${at + 1}`;
     if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) throw new Error(`${where} is not an object`);
-    const unknown = Object.keys(entry).filter((name) => name !== 'layer' && name !== 'path');
+    const unknown = Object.keys(entry).filter((name) => name !== 'layer' && name !== 'path' && name !== 'keep');
     if (unknown.length > 0) throw new Error(`${where} has the unknown key ${JSON.stringify(unknown[0])}, it takes "layer" and "path"`);
-    const { layer, path } = entry as { layer: unknown; path: unknown };
+    const { layer, path, keep } = entry as { layer: unknown; path: unknown; keep?: unknown };
     if (layer === 'screenshot') throw new Error(`${where}: a screenshot is never compared by the gate, so it needs no noise entry`);
     if (typeof layer !== 'string' || !(LAYERS as readonly string[]).includes(layer)) {
       throw new Error(`${where} needs a "layer" of ${LAYERS.join(', ')}`);
@@ -137,7 +137,10 @@ export function parseNoise(value: unknown): Noise[] {
     const id = `${layer} ${matcher(tokens).canonical}`;
     if (seen.has(id)) throw new Error(`${where} is listed twice: ${id}`);
     seen.add(id);
-    return { layer: layer as Layer, path };
+    if ('keep' in entry && (keep !== false || layer !== 'effects')) {
+      throw new Error(`${where}: "keep" takes only false, in a noise entry of the side effects`);
+    }
+    return { layer: layer as Layer, path, ...(keep === false ? { keep } : {}) };
   });
 }
 

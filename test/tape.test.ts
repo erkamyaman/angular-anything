@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { compile } from '../src/noise.ts';
+import { compile, parseNoise } from '../src/noise.ts';
 import { bodyParts, urlParts } from '../src/parts.ts';
 import { agreedTape, maskedOutside, maskRequest, player, readNotes, requestKey } from '../src/tape.ts';
 import type { Asked, TapeEntry } from '../src/tape.ts';
@@ -373,4 +373,21 @@ test('a changed mutation is also found where its path stores a part as its kind'
   play.take(save('rand3', '{"t":2}'), 1, 0);
   assert.equal(play.findings[0].request, 'POST /api/user/rand3 (changed mutation)');
   assert.deepEqual(play.findings[0].differs, ['requests[*].body.t']);
+});
+
+test('a noise entry with "keep": false stores the kind also where the two runs agree', () => {
+  const code = { layer: 'effects' as const, path: 'requests[n].body.code' };
+  const sent = asked('POST', '/api/login', '{"code":"482913","who":"ada"}');
+  const noise = compile([{ ...code, path: code.path.replace('[n]', '[0]'), keep: false }, { layer: 'effects', path: 'requests[0].body.who' }]);
+  const [kept] = agreedTape([entry(1, 0, sent, '')], [{ ...sent, step: 1 }], noise, never);
+  assert.deepEqual(kept.body, { code: mask, who: 'ada' });
+});
+
+test('"keep" is false or absent, and only in a noise entry of the side effects', () => {
+  const effects = { layer: 'effects', path: 'requests[0].body.code' };
+  assert.deepEqual(parseNoise([{ ...effects, keep: false }]), [{ ...effects, keep: false }]);
+  assert.deepEqual(parseNoise([effects]), [effects]);
+  for (const entry of [{ ...effects, keep: true }, { layer: 'events', path: '[0].name', keep: false }]) {
+    assert.throws(() => parseNoise([entry]), /noise entry 1: "keep" takes only false, in a noise entry of the side effects/);
+  }
 });

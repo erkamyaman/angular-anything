@@ -4,6 +4,13 @@ export const ARRIVE_MS = 1000;
 const BARRIER_MS = 1000;
 const POLL_MS = 5;
 
+const joined = (entries: { bytes?: string }[] | undefined): Buffer | undefined => {
+  const parts = entries?.map((entry) => entry.bytes);
+  return parts?.every((part) => part !== undefined)
+    ? Buffer.concat(parts.map((part) => Buffer.from(part, 'base64')))
+    : undefined;
+};
+
 type Sent = {
   id: string;
   method: string;
@@ -22,13 +29,14 @@ export type SendOrder = {
 export async function sendOrder(session: CDPSession, arriveMs = ARRIVE_MS): Promise<SendOrder> {
   const sent: Sent[] = [];
   const places = new WeakMap<Request, number>();
+  const intercepted = new Map<string, Buffer>();
   session.on('Network.requestWillBeSent', ({ requestId, request }) => {
-    const parts = request.postDataEntries?.map((entry) => entry.bytes);
-    const body = parts?.every((part) => part !== undefined)
-      ? Buffer.concat(parts.map((part) => Buffer.from(part, 'base64')))
-      : undefined;
     const { method, url, headers } = request;
-    sent.push({ id: requestId, method, url, headers, body, seen: false, gone: false });
+    sent.push({ id: requestId, method, url, headers, body: joined(request.postDataEntries), seen: false, gone: false });
+  });
+  session.on('Fetch.requestPaused', ({ networkId, request }) => {
+    const body = joined(request.postDataEntries);
+    if (networkId !== undefined && body !== undefined) intercepted.set(networkId, body);
   });
   const gone = ({ requestId }: { requestId: string }) => {
     for (const each of sent) if (each.id === requestId) each.gone = true;
@@ -54,15 +62,18 @@ export async function sendOrder(session: CDPSession, arriveMs = ARRIVE_MS): Prom
     const missed = (each: Sent) =>
       Object.entries(each.headers).filter(([name, value]) => headers[name.toLowerCase()] !== value).length;
     const matched = (each: Sent) => Object.keys(each.headers).length - missed(each);
+    const bodyOf = (each: Sent) => each.body ?? intercepted.get(each.id);
+    const unknown = (each: Sent) => Number(bodyOf(each) === undefined);
+    const fits = (body: Buffer | undefined) => body === undefined || body.equals(request.postDataBuffer() ?? Buffer.alloc(0));
     const found = sent
       .filter(
         (each) =>
           !each.seen &&
           each.method === request.method() &&
           each.url === request.url() &&
-          (each.body === undefined || each.body.equals(request.postDataBuffer() ?? Buffer.alloc(0))),
+          fits(bodyOf(each)),
       )
-      .sort((a, b) => missed(a) - missed(b) || matched(b) - matched(a))[0];
+      .sort((a, b) => unknown(a) - unknown(b) || missed(a) - missed(b) || matched(b) - matched(a))[0];
     if (!found) return;
     found.seen = true;
     places.set(request, sent.indexOf(found));

@@ -52,6 +52,7 @@ type Instrumented = {
   __aaShadows: WeakMap<Element, ShadowRoot>;
   __aaSecretField?(el: Element): boolean;
   __aaTyping?: Element[];
+  __aaTurned?(): void;
   __aaHeld: WeakSet<SVGSVGElement>;
   __aaSeen: WeakSet<Animation>;
   __aaPending?: Map<unknown, { due: number; delay: number }>;
@@ -197,12 +198,18 @@ export function initPage(): void {
         .split(/\s+/)
         .some((token) => secretAutocomplete.includes(token)));
 
+  const turned = () => page.__aaTyping?.some((element) => page.__aaSecretField!(element)) ?? false;
+  const turning = new MutationObserver(() => {
+    if (turned()) page.__aaTurned?.();
+  });
+
   const reaching = (event: Event) => {
     const typing = page.__aaTyping;
     if (!typing || !event.isTrusted) return;
     let element = event.composedPath()[0] as Element | null | undefined;
     while (element) {
       typing.push(element);
+      turning.observe(element, { attributeFilter: ['type', 'autocomplete'] });
       element = (element.shadowRoot ?? page.__aaShadows.get(element))?.activeElement;
     }
     if (!typing.some((each) => page.__aaSecretField!(each))) return;
@@ -237,6 +244,7 @@ export function initPage(): void {
   XMLHttpRequest.prototype.send = function (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
     const request = synchronous.get(this);
     if (request === undefined) return send.call(this, body);
+    if (turned()) throw new DOMException('angular-anything does not send after typing reached a secret field', 'NetworkError');
     page.__aaSync?.(request, true);
     try {
       return send.call(this, body);
@@ -427,7 +435,14 @@ export function watchTyping(): void {
 
 export function typedIntoSecretField(): boolean {
   const page = window as unknown as Instrumented;
-  return page.__aaTyping!.some((element) => page.__aaSecretField!(element));
+  return page.__aaTyping?.some((element) => page.__aaSecretField!(element)) ?? false;
+}
+
+export function stopTyping(): boolean {
+  const page = window as unknown as Instrumented;
+  const reached = page.__aaTyping?.some((element) => page.__aaSecretField!(element)) ?? false;
+  page.__aaTyping = undefined;
+  return reached;
 }
 
 export function adoptPage(...roots: ShadowRoot[]): void {

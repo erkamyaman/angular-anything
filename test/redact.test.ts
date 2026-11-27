@@ -38,6 +38,11 @@ test('a path keeps the words of the tool and the browser and hides the names the
   assert.equal(masked('style', 'html[1].box.width'), 'html[1].box.width');
   assert.equal(masked('accessibility', 'tree/main[1]/button[2].name'), 'tree/main[1]/button[2].name');
   assert.equal(masked('accessibility', 'attributes.html[1]/form[1].aria-ada'), 'attributes.html[1]/form[1].<>');
+  assert.equal(masked('accessibility', 'attributes.html[1].aria-q.name[1]'), 'attributes.html[1].<>.<>[1]');
+  assert.equal(masked('accessibility', 'attributes.html[1]/p[1].aria-q.ada[1]'), 'attributes.html[1]/p[1].<>.<>[1]');
+  assert.equal(masked('accessibility', 'attributes.html[1]/x.ada[1]'), 'attributes.html[1]/x.<>[1]');
+  assert.equal(masked('style', 'html[1]/x.ada[1]/p[2].style.color'), 'html[1]/x.<>[1]/p[2].style.color');
+  assert.equal(masked('dom', 'html[1].attrs.aria-q.ada/p[1]'), 'html[1].attrs.<>.<>/p[1]');
   assert.equal(masked('events', '[0].name'), '[0].name');
   assert.equal(masked('events', '[0].payload.value.name'), '[0].payload.<>.<>');
   assert.equal(masked('effects', 'storage.title'), 'storage.<>');

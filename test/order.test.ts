@@ -23,7 +23,9 @@ function fake() {
     return requestId;
   };
   const ends = (requestId: string, name = 'Network.loadingFinished') => emit(name, { requestId });
-  return { session, sends, ends, late };
+  const intercepts = (networkId: string, body: string) =>
+    emit('Fetch.requestPaused', { networkId, request: { postDataEntries: [{ bytes: Buffer.from(body).toString('base64') }] } });
+  return { session, sends, ends, late, intercepts };
 }
 
 const request = (name: string, { method = 'GET', headers = {}, body }: Seen = {}) =>
@@ -74,6 +76,19 @@ test('a body that the page does not show whole fits any body', async () => {
   sends('b');
   const [file, b] = [request('file', { method: 'POST', body: 'head and file' }), request('b')];
   assert.deepEqual(await order.sorted([b, file]), [file, b]);
+});
+
+test('a body that only the interception shows tells requests with one URL apart', async () => {
+  const { session, sends, intercepts } = fake();
+  const order = await sendOrder(session);
+  const post = { method: 'POST' };
+  const [late, first] = [sends('blob', post), sends('blob', post)];
+  intercepts(first, 'small');
+  const small = request('blob', { ...post, body: 'small' });
+  await order.sorted([small]);
+  intercepts(late, 'large');
+  const large = request('blob', { ...post, body: 'large' });
+  assert.deepEqual(await order.sorted([small, large]), [large, small]);
 });
 
 test('a request that the page did not announce keeps the place in which it came', async () => {

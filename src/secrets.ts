@@ -6,7 +6,7 @@ import { matcher, parsePath } from './path.ts';
 import type { Token } from './path.ts';
 import { CREDENTIAL_HEADERS, maskRequest } from './tape.ts';
 import type { TapeEntry } from './tape.ts';
-import { walkLayer } from './value.ts';
+import { isObject, walkLayer } from './value.ts';
 
 export const KINDS = ['credential', 'jwt', 'pem', 'bearer-or-basic', 'url-password', 'named-value', 'secret-field'] as const;
 export type Kind = (typeof KINDS)[number];
@@ -14,7 +14,7 @@ export type Kind = (typeof KINDS)[number];
 const ACCEPT_LAYERS = [...LAYERS, 'tape'] as const;
 export type Accept = { layer: (typeof ACCEPT_LAYERS)[number]; path: string; kind: Kind; reason: string };
 
-export type Finding = { step: number; layer: string; tokens: Token[]; kind: Kind; hidden: Map<number, Kind> };
+export type Finding = { step: number; layer: string; tokens: Token[]; kind: Kind; hidden: Map<number, Kind>; text?: string };
 
 export type Seen = { credentials: Set<string>; bodies: WeakMap<object, Buffer> };
 
@@ -64,17 +64,20 @@ export function addSetCookie(seen: Seen, header: string): void {
 
 const upperEscapes = (text: string): string => text.replace(/%[0-9a-f]{2}/gi, (escape) => escape.toUpperCase());
 
+const inBase64 = (bytes: Buffer): string[] =>
+  [0, 1, 2].flatMap((before) => {
+    const whole = Buffer.concat([Buffer.alloc(before), bytes]).toString('base64');
+    const own = whole.slice(Math.ceil((before * 4) / 3), Math.floor(((before + bytes.length) * 4) / 3));
+    return [own, own.replaceAll('+', '-').replaceAll('/', '_')];
+  });
+
 function holds(text: string, escaped: string, value: string): boolean {
   const bytes = Buffer.from(value);
-  const forms = [
-    value,
-    JSON.stringify(value).slice(1, -1),
-    bytes.toString('base64').replace(/=+$/, ''),
-    bytes.toString('base64url'),
-  ];
+  const forms = [value, JSON.stringify(value).slice(1, -1), ...inBase64(bytes)];
+  const inUrl = [encodeURIComponent(value.toWellFormed()), new URLSearchParams([['', value]]).toString().slice(1)];
   return (
     forms.some((form) => text.includes(form)) ||
-    escaped.includes(encodeURIComponent(value.toWellFormed())) ||
+    inUrl.some((form) => escaped.includes(form)) ||
     text.toLowerCase().includes(bytes.toString('hex'))
   );
 }
@@ -131,16 +134,32 @@ const tokensOf = (path: string): Token[] => {
 
 const isKey = (token: Token): token is { key: string } => typeof token === 'object' && 'key' in token;
 
-function finding(step: number, layer: string, tokens: Token[], kind: Kind, credentials: Set<string>): Finding {
+function finding(step: number, layer: string, tokens: Token[], kind: Kind, credentials: Set<string>, text?: string): Finding {
   const hidden = new Map<number, Kind>();
   tokens.forEach((token, at) => {
     const [found] = isKey(token) ? kindsOf(token.key, credentials) : [];
     if (found) hidden.set(at, found);
   });
-  return { step, layer, tokens, kind, hidden };
+  return { step, layer, tokens, kind, hidden, ...(kind === 'named-value' ? { text } : {}) };
 }
 
-function walk(layer: Parameters<typeof walkLayer>[0], document: object, credentials: Set<string>, report: (tokens: Token[], kind: Kind) => void) {
+type Report = (tokens: Token[], kind: Kind, text?: string) => void;
+
+const ownedByTool = (object: Record<string, unknown>): boolean => {
+  if ('$order' in object) return Array.isArray(object.$order) && object.$order.every((key) => Object.hasOwn(object, String(key)));
+  return isNumberNode(object) && Object.keys(object).every((key) => key === '$aa' || key === 'source');
+};
+
+const revealed = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(revealed);
+  if (!isObject(value)) return value;
+  const kept = ownedByTool(value);
+  return Object.fromEntries(
+    Object.entries(value).map(([key, below]) => [!kept && /^\$(aa|order)$/.test(key) ? `$${key}` : key, revealed(below)]),
+  );
+};
+
+function walk(layer: Parameters<typeof walkLayer>[0], document: object, credentials: Set<string>, report: Report) {
   walkLayer(layer, document, (path, value) => {
     const tokens = tokensOf(path);
     const last = tokens.at(-1)!;
@@ -151,19 +170,66 @@ function walk(layer: Parameters<typeof walkLayer>[0], document: object, credenti
       ...(isKey(last) ? kindsOf(last.key, credentials) : []),
       ...(text === undefined ? [] : textKinds(text, credentials, key)),
     ]);
-    for (const kind of kinds) report(tokens, kind);
+    for (const kind of kinds) report(tokens, kind, text);
   });
 }
 
 const decoded = (entry: TapeEntry) =>
   entry.answer === null ? '' : Buffer.from(entry.answer.body, entry.answer.base64 ? 'base64' : 'utf8').toString('utf8');
 
+const answerBody = (text: string, type = ''): unknown =>
+  type.toLowerCase().startsWith('application/x-www-form-urlencoded') ? queryFields(text) : (expandJson(text, false) ?? text);
+
+function parsedJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+function namedBelow(text: string, credentials: Set<string>): string[] {
+  if (parsedJson(text) === undefined) return [];
+  let at = 0;
+  const unique = text.replace(/"[^"\\]*(?:\\.[^"\\]*)*"(\s*:)?/g, (whole: string, colon?: string) =>
+    colon === undefined ? whole : `${whole.slice(0, -colon.length - 1)}\\u0000${at++}"${colon}`,
+  );
+  const found: string[] = [];
+  const walk = (value: unknown, key?: string) => {
+    if (typeof value === 'object' && value !== null) {
+      for (const [name, below] of Object.entries(value)) walk(below, Array.isArray(value) ? key : name.split('\0')[0]);
+      return;
+    }
+    if (typeof value === 'string') found.push(...namedBelow(value, credentials));
+    if (kindsOf(String(value), credentials, key).includes('named-value')) found.push(String(value));
+  };
+  walk(JSON.parse(unique));
+  return found;
+}
+
+const keysIn = (value: unknown): number => {
+  if (typeof value !== 'object' || value === null) return 0;
+  const below = Object.values(value).reduce((sum: number, each) => sum + keysIn(each), 0);
+  return below + (Array.isArray(value) ? 0 : Object.keys(value).length);
+};
+
+const nestedRepeat = (value: unknown): boolean =>
+  typeof value === 'string' ? repeatsKey(value) : typeof value === 'object' && value !== null && Object.values(value).some(nestedRepeat);
+
+function repeatsKey(text: string): boolean {
+  const parsed = parsedJson(text);
+  if (parsed === undefined) return false;
+  const written = [...text.matchAll(/"[^"\\]*(?:\\.[^"\\]*)*"(\s*:)?/g)].filter((match) => match[1] !== undefined);
+  return written.length > keysIn(parsed) || nestedRepeat(parsed);
+}
+
 export function scanCase({ seen, observations, fields, tape, noise }: Scanned): Finding[] {
   const { credentials } = seen;
   const findings: Finding[] = [];
   observations.forEach((observation, at) => {
     for (const layer of LAYERS) {
-      walk(layer, observation, credentials, (tokens, kind) => findings.push(finding(at + 1, layer, tokens, kind, credentials)));
+      const document = layer === 'events' || layer === 'effects' ? { ...observation, [layer]: revealed(observation[layer]) } : observation;
+      walk(layer, document, credentials, (tokens, kind, text) => findings.push(finding(at + 1, layer, tokens, kind, credentials, text)));
     }
   });
   fields.forEach((paths, at) => {
@@ -174,16 +240,26 @@ export function scanCase({ seen, observations, fields, tape, noise }: Scanned): 
   tape.forEach((entry, at) => {
     const masked = maskRequest(entry, noise);
     const text = decoded(entry);
-    const answer = entry.answer && { status: entry.answer.status, headers: entry.answer.headers, body: expandJson(text, false) ?? text };
+    const answer = entry.answer && {
+      status: entry.answer.status,
+      headers: entry.answer.headers,
+      body: answerBody(text, entry.answer.headers['content-type']),
+    };
     const events: unknown[] = [];
-    events[at] = { ...masked, answer };
+    events[at] = revealed({ ...masked, answer });
     const found: Finding[] = [];
-    walk('events', { events }, credentials, (tokens, kind) => found.push(finding(entry.step, 'tape', tokens, kind, credentials)));
+    walk('events', { events }, credentials, (tokens, kind, value) => found.push(finding(entry.step, 'tape', tokens, kind, credentials, value)));
     const raw = (path: string, bytes: string) => {
       const below = tokensOf(path);
-      const shown = found.filter((each) => below.every((token, depth) => JSON.stringify(token) === JSON.stringify(each.tokens[depth])));
+      const repeated = repeatsKey(bytes);
+      const shown = repeated
+        ? []
+        : found.filter((each) => below.every((token, depth) => JSON.stringify(token) === JSON.stringify(each.tokens[depth])));
       for (const kind of kindsOf(bytes, credentials)) {
         if (!shown.some((each) => each.kind === kind)) found.push(finding(entry.step, 'tape', below, kind, credentials));
+      }
+      for (const value of repeated ? namedBelow(bytes, credentials) : []) {
+        found.push(finding(entry.step, 'tape', below, 'named-value', credentials, value));
       }
     };
     const sent = seen.bodies.get(entry);

@@ -347,3 +347,95 @@ test('an accepted index does not stand for a step into a shadow tree', () => {
   assert.ok(accepts('html[1]/input[1].props.value'));
   assert.ok(!accepts('html[1][0].input[1].props.value'));
 });
+
+test('a credential is found inside a longer base64 text at each offset, and in a form that writes a space as +', () => {
+  const value = 'fake?>secret "value" ~~~ 0123456789a';
+  for (const before of ['', 'a', 'ab', 'abc']) {
+    for (const behind of ['', 'x', 'xy', 'xyz']) {
+      const bytes = Buffer.from(`${before}${value}${behind}`);
+      for (const encoding of ['base64', 'base64url'] as const) {
+        const text = bytes.toString(encoding);
+        assert.deepEqual(kindsOf(`see ${text} here`, holding(value)), ['credential'], `${before}|${behind}|${encoding}`);
+      }
+    }
+  }
+  assert.deepEqual(kindsOf(Buffer.from(`ab${value.slice(1)}`).toString('base64'), holding(value)), []);
+  const form = new URLSearchParams({ q: value }).toString();
+  assert.ok(form.includes('+'));
+  assert.deepEqual(kindsOf(form, holding(value)), ['credential']);
+});
+
+test('a key that the tool reserves hides nothing of a page from the check', () => {
+  const seen = withCredential(word);
+  const observations = [
+    observed((o) => {
+      o.events = [
+        { name: 'a', payload: { $order: word } },
+        { name: 'b', payload: { $aa: 'number', source: '1', rest: word } },
+        { name: 'c', payload: { $aa: 'noise', kind: 'string', rest: word } },
+        { name: 'd', payload: { $order: { password: 'abcdefgh12345678' } } },
+      ];
+      o.effects.storage = { $order: word };
+    }),
+  ];
+  assert.deepEqual(lines({ seen, observations }), [
+    'step 1, layer events, path [0]["payload"]["$$order"]: credential',
+    'step 1, layer events, path [1]["payload"]["rest"]: credential',
+    'step 1, layer events, path [2]["payload"]["rest"]: credential',
+    'step 1, layer events, path [3]["payload"]["$$order"]["password"]: named-value',
+    'step 1, layer effects, path storage["$$order"]: credential',
+  ]);
+});
+
+test('a reserved name in a query of the tape hides nothing', () => {
+  const tape = [entry({ url: { path: ['api'], query: { $order: [word] } } })];
+  assert.deepEqual(lines({ seen: withCredential(word), tape }), ['step 1, layer tape, path [0]["url"]["query"]["$$order"][0]: credential']);
+});
+
+test('a stored key order, a number that keeps its digits and a mask are read as before', () => {
+  const observations = [
+    observed((o) => {
+      o.effects.storage = { saved: { [jwt]: '1', other: '2', $order: [jwt, 'other'] } };
+      o.events = [{ name: 'a', payload: { $aa: 'noise', kind: 'string', group: 1 } }];
+    }),
+  ];
+  assert.deepEqual(lines({ observations }), ['step 1, layer effects, path storage["saved"]["<jwt>"]: jwt']);
+});
+
+test('accepting a finding of a JSON answer hides no second value under a repeated key', () => {
+  const [kept, hidden] = [jwt, `${jwt}x`];
+  const answer = (body: string) => ({ status: 200, headers: {}, body });
+  const found = lines({ tape: [entry({ answer: answer(`{"a":"${hidden}","a":"${kept}"}`) })] });
+  assert.deepEqual(found, ['step 1, layer tape, path [0]["answer"]["body"]["a"]: jwt', 'step 1, layer tape, path [0]["answer"]["body"]: jwt']);
+  const single = lines({ tape: [entry({ answer: answer(`{"a":"${kept}","b":{"a":"x: \\"y\\":"}}`) })] });
+  assert.deepEqual(single, ['step 1, layer tape, path [0]["answer"]["body"]["a"]: jwt']);
+});
+
+test('a value under a repeated key of a JSON body is found by its name', () => {
+  const value = 'abcdefgh12345678';
+  const answer = (body: string) => ({ status: 200, headers: {}, body });
+  const whole = ['step 1, layer tape, path [0]["answer"]["body"]: named-value'];
+  for (const body of [
+    `{"token":"${value}","token":"x"}`,
+    `{"a":{"token":"${value}"},"a":null}`,
+    `{"session":["${value}"],"session":[]}`,
+    `{"a":[{"api_key":"${value}","api_key":1}]}`,
+    `{"\\u0074oken":"${value}","token":"x"}`,
+    `{"data":"{\\"token\\":\\"${value}\\",\\"token\\":\\"x\\"}"}`,
+  ]) {
+    assert.deepEqual(lines({ tape: [entry({ answer: answer(body) })] }), whole, body);
+  }
+  assert.deepEqual(lines({ tape: [entry({ answer: answer(`{"ref":"${value}","ref":"x","token":"x"}`) })] }), []);
+  const seen = newSeen();
+  const sent = entry({ body: { token: 'x' } });
+  seen.bodies.set(sent, Buffer.from(`{"token":"${value}","token":"x"}`));
+  assert.deepEqual(lines({ seen, tape: [sent] }), ['step 1, layer tape, path [0]["body"]: named-value']);
+});
+
+test('an answer that is a form is checked by its field names', () => {
+  const answer = (type: string) => ({ status: 200, headers: { 'content-type': type }, body: 'access_token=abcdefgh12345678&scope=read' });
+  assert.deepEqual(lines({ tape: [entry({ answer: answer('application/x-www-form-urlencoded; charset=utf-8') })] }), [
+    'step 1, layer tape, path [0]["answer"]["body"]["access_token"][0]: named-value',
+  ]);
+  assert.deepEqual(lines({ tape: [entry({ answer: answer('text/plain') })] }), []);
+});

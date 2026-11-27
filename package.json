@@ -4,16 +4,25 @@
   "private": true,
   "description": "Replays every recorded interaction of the original against the port.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/erkamyaman/angular-anything.git"
+  },
   "type": "module",
   "bin": {
-    "angular-anything": "./src/cli.ts"
+    "angular-anything": "./dist/cli.js"
   },
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=24"
   },
   "scripts": {
     "aa": "node src/cli.ts",
     "typecheck": "tsc --noEmit",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+    "prepack": "node --run build",
     "test": "node --test \"test/**/*.test.ts\"",
     "fixtures:build": "pnpm -r run build",
     "fixtures:serve": "node fixtures/server.ts"

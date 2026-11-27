@@ -1,6 +1,6 @@
 # Spike, milestone 1: walking skeleton
 
-Status: done on 2026-11-21. The measured results are in [SPIKE-RESULTS.md](SPIKE-RESULTS.md). Nothing here is published or stable.
+Status: done on 2026-11-21. The measured results are in [SPIKE-RESULTS.md](SPIKE-RESULTS.md). Nothing here is published or stable. "The planning notes" and paths under `planning/` mean private notes that are not part of this repository.
 
 ## Goal
 

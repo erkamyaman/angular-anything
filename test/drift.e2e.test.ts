@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { createServer as createTcp } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,12 +20,14 @@ let port: string;
 const texts = { original: 'same', port: 'same' };
 const widths = { original: 10, port: 10 };
 const later = { original: 'page', port: 'page' };
+const silent = { original: false, port: false };
 let dead: string;
 const closers: (() => void)[] = [];
 
 async function serve(side: keyof typeof texts): Promise<string> {
   const server = createServer((request, response) => {
     const { pathname } = new URL(request.url!, 'http://localhost');
+    if (silent[side]) return;
     const send = (type: string, body: string) =>
       response.writeHead(200, { 'content-type': type, 'cache-control': 'no-store', connection: 'close' }).end(body);
     if (pathname === '/logo.svg') {
@@ -35,6 +38,16 @@ async function serve(side: keyof typeof texts): Promise<string> {
       response.writeHead(500, { connection: 'close' }).end();
     } else if (pathname === '/next' && later[side] === 'dead') {
       response.writeHead(302, { location: `${dead}/x`, connection: 'close' }).end();
+    } else if (pathname === '/next' && later[side] === 'reset') {
+      request.socket.resetAndDestroy();
+    } else if (pathname === '/next' && later[side] === 'hanging') {
+      return;
+    } else if (pathname === '/next' && later[side] === 'moved to hanging') {
+      response.writeHead(302, { location: '/hang', connection: 'close' }).end();
+    } else if (pathname === '/hang') {
+      return;
+    } else if (pathname === '/next' && later[side] === 'stuck script') {
+      send('text/html; charset=utf-8', `${page('next')}<script src="/hang"></script>`);
     } else if (pathname === '/next') {
       send('text/html; charset=utf-8', page('next'));
     } else {
@@ -42,7 +55,10 @@ async function serve(side: keyof typeof texts): Promise<string> {
     }
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  closers.push(() => server.close());
+  closers.push(() => {
+    server.close();
+    server.closeAllConnections();
+  });
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
@@ -89,6 +105,7 @@ beforeEach(() => {
   texts.port = 'same';
   Object.assign(widths, { original: 10, port: 10 });
   Object.assign(later, { original: 'page', port: 'page' });
+  Object.assign(silent, { original: false, port: false });
 });
 
 after(async () => {
@@ -212,20 +229,62 @@ test('differences found before a network error still count', async () => {
   assert.match((await walk()).error, /; the port: step 2 \(goto \/next\): the page answered 500/);
 });
 
-test('a route that answers nothing is a difference, an address that refuses is not checked', async () => {
+test('a route that answers nothing is a difference', async () => {
   later.port = 'failing';
   assert.deepEqual((await walk()).drift, { original: 'matches', port: 'differs' });
   later.port = 'empty';
   const empty = await walk();
   assert.match(empty.output, /^the port regressed: walk \(1 of 1 case\)$/m);
   assert.deepEqual(empty.drift, { original: 'matches', port: 'differs' });
-  later.port = 'dead';
-  const refused = await walk();
-  assert.equal(refused.status, 1, refused.output);
-  assert.deepEqual(refused.drift, { original: 'matches', port: 'not checked' });
+});
+
+for (const [kind, words] of [
+  ['dead', 'redirects to an address that refuses'],
+  ['reset', 'resets the connection after the server has answered'],
+  ['moved to hanging', 'redirects to an address that never answers'],
+  ['stuck script', 'loads a page whose script never arrives'],
+]) {
+  test(`a route that ${words} differs, on either side`, async () => {
+    later.port = kind;
+    const port = await walk();
+    assert.equal(port.status, 1, port.output);
+    assert.deepEqual(port.drift, { original: 'matches', port: 'differs' });
+    later.port = 'page';
+    later.original = kind;
+    assert.deepEqual((await walk()).drift, { original: 'differs', port: 'matches' });
+  });
+}
+
+test('a route that never answers is not checked, on either side', async () => {
+  later.port = 'hanging';
+  const port = await walk();
+  assert.equal(port.status, 1, port.output);
+  assert.match(port.output, /^not checked: the port in walk \(1 of 1 case\)$/m);
+  assert.deepEqual(port.drift, { original: 'matches', port: 'not checked' });
   later.port = 'page';
-  later.original = 'dead';
-  assert.deepEqual((await walk()).drift, { original: 'not checked', port: 'matches' });
+  later.original = 'hanging';
+  const original = await walk();
+  assert.match(original.output, /^not checked: the original in walk \(1 of 1 case\)$/m);
+  assert.doesNotMatch(original.output, /changed|regressed/);
+  assert.deepEqual(original.drift, { original: 'not checked', port: 'matches' });
+  texts.original = 'new';
+  assert.deepEqual((await walk()).drift, { original: 'differs', port: 'matches' });
+});
+
+test('a server that never answers or resets before it has answered is not checked', async () => {
+  silent.original = true;
+  const hanging = await drift();
+  assert.equal(hanging.status, 1, hanging.output);
+  assert.match(hanging.output, /^not checked: the original in home, other \(2 of 2 cases\)$/m);
+  assert.doesNotMatch(hanging.output, /changed|regressed|no drift/);
+  silent.original = false;
+  const resetting = createTcp((socket) => socket.once('data', () => socket.resetAndDestroy()));
+  await new Promise<void>((resolve) => resetting.listen(0, '127.0.0.1', resolve));
+  closers.push(() => resetting.close());
+  const reset = await drift(original, `http://127.0.0.1:${(resetting.address() as AddressInfo).port}`);
+  assert.match(reset.output, /ERR_CONNECTION_RESET/);
+  assert.match(reset.output, /^not checked: the port in home, other \(2 of 2 cases\)$/m);
+  assert.doesNotMatch(reset.output, /changed|regressed|no drift/);
 });
 
 test('an unresolved name, an unreachable address and a timeout of the network are not checked, other errors differ', () => {

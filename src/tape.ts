@@ -82,9 +82,11 @@ export function agreedTape(tape: TapeEntry[], again: Taken[], noise: Entry[], wi
     if (!partner || masked === entry) return masked;
     const [first, second] = [entry, partner.request].map((each) => nodesOf('effects', wrapped(each)));
     const probe = wrapped(masked);
+    const dropped = (path: string) =>
+      noise.some((each) => each.keep === false && each.layer === 'effects' && each.matcher.matches(path, true));
     walkLayer('effects', probe, (path, value, set) => {
       const was = first.get(path);
-      if (!isPlaceholder(value) || JSON.stringify(was) !== JSON.stringify(second.get(path))) return;
+      if (!isPlaceholder(value) || JSON.stringify(was) !== JSON.stringify(second.get(path)) || dropped(path)) return;
       const names = parsePath(path).flatMap((token) => (typeof token === 'object' && 'key' in token ? [token.key] : []));
       const text = isNumberNode(was) ? was.source.replace(/e(\d+)$/, (_, zeros: string) => '0'.repeat(Number(zeros))) : String(was);
       if (!withheld(text, names)) set(was);

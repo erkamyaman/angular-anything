@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -8,6 +8,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import type { Browser } from 'playwright';
+import type { Case } from '../src/case.ts';
+import { launchBrowser, runCase } from '../src/run.ts';
+import { newSeen } from '../src/secrets.ts';
 
 const cli = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 
@@ -165,6 +169,53 @@ if (kind === 'delegates') {
   document.querySelector('input').dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
 });`,
   ),
+  '/framed': doc(
+    `<h1>Sign in</h1><div id="here"></div>`,
+    `const v = query.get('v');
+const frame = Object.assign(document.createElement('iframe'), { title: 'Pay' });
+frame.src = (v === 'cross' ? location.origin.replace('127.0.0.1', 'localhost') : location.origin) + '/inner-field?v=' + v;
+$('here').append(frame);
+frame.onload = () => {
+  if (v === 'typed') frame.contentDocument.querySelector('input').focus();
+};`,
+  ),
+  '/inner-field': doc(
+    `<input aria-label="Card" autocomplete="cc-number">`,
+    `const field = document.querySelector('input');
+const v = query.get('v');
+if (v === 'same' || v === 'cross') field.value = '${typed}';
+if (v === 'typed') {
+  for (const type of ['keydown', 'beforeinput', 'input']) field.addEventListener(type, () => {
+    const request = new XMLHttpRequest();
+    request.open('POST', '/api/login', false);
+    request.send('heard');
+  });
+}`,
+  ),
+  '/turns': doc(
+    `<div id="form"><input id="pass" aria-label="Passphrase"></div>`,
+    `const v = query.get('v');
+const field = $('pass');
+field.addEventListener('input', () => {
+  field.type = 'password';
+  if (v === 'sync') {
+    const request = new XMLHttpRequest();
+    request.open('POST', '/api/login', false);
+    try { request.send(field.value); } catch {}
+  }
+  if (v === 'leaves') location.href = '/api/login?said=' + field.value;
+  if (v === 'removes') $('form').replaceChildren();
+});`,
+  ),
+  '/named-line': doc(
+    `<button id="keep">Keep</button><button id="go">Go</button>`,
+    `on('keep', () => localStorage.setItem('token', '${word}'));
+on('go', () => fetch('/api/never/${word}'));`,
+  ),
+  '/shows-word': doc(`<p>${word}</p>`),
+  '/reads-word': doc(`<p>reads</p>`, `fetch('/api/x?ref=${word}');`),
+  '/sends-word': doc(`<p>sends</p>`, `fetch('/api/ping', { headers: { 'X-CSRF-TOKEN': '${word}' } });`),
+  '/late-cookie': doc(`<p>late</p><img alt="" src="/drops.gif">`),
   '/hop-secret': doc(`<p id="out">?</p>`, `fetch('/api/hop-set').then((answer) => answer.text());`),
   '/refusal-line': doc(
     `<p id="out">?</p>`,
@@ -180,6 +231,51 @@ on('go', () => fetch('/api/never/${word}'));`,
   '/many': doc(`<ul id="list"></ul>`, `$('list').innerHTML = '<li>${jwt}</li>'.repeat(101);`),
   '/leads-away': doc(`<a href="/api/never/page?ref=abcdefgh12345678">Away</a>`),
 };
+
+Object.assign(pages, {
+  '/turns-later': doc(
+    `<input id="pass" aria-label="Passphrase">`,
+    `const v = query.get('v');
+const field = $('pass');
+const turn = () => {
+  field.type = 'password';
+  fetch('/api/login', { method: 'POST', body: field.value }).catch(() => {});
+  field.value = '';
+  if (v === 'back') setTimeout(() => (field.type = 'text'), 20);
+};
+field.addEventListener('input', () => {
+  if (v === 'timer' || v === 'back') setTimeout(turn, 100);
+  if (v === 'frame') requestAnimationFrame(turn);
+  if (v === 'answer') fetch('/api/ping').then(turn);
+}, { once: true });`,
+  ),
+  '/reused': doc(
+    `<input id="field" aria-label="Field"><button id="next">Next</button><button id="done">Done</button><p id="out">?</p>`,
+    `const send = (path) => fetch(path, { method: 'POST' }).then((r) => r.text()).then((text) => { $('out').textContent = text; });
+on('next', () => { $('field').value = ''; $('field').type = 'password'; send('/api/login'); });
+on('done', () => send('/api/login'));`,
+  ),
+  '/reused-frame': doc(
+    `<iframe title="Inner" src="/inner-reused"></iframe><h1>Sign in</h1><button id="next">Next</button><p id="out">?</p>`,
+    `on('next', () => {
+  const field = document.querySelector('iframe').contentDocument.querySelector('input');
+  field.value = '';
+  field.type = 'password';
+  fetch('/api/login', { method: 'POST' }).then((r) => r.text()).then((text) => { $('out').textContent = text; });
+});`,
+  ),
+  '/inner-reused': doc(`<input aria-label="Name">`, `document.querySelector('input').focus();`),
+  '/lazy-frame': doc(
+    `<button>Go</button><div style="height: 9000px"></div><iframe title="Lazy" loading="lazy" src="/ignores-query"></iframe><iframe title="Hidden" loading="lazy" style="display: none" src="/ignores-query"></iframe>`,
+    `if (query.get('v') === 'filled') frames[0].document.body.innerHTML = '<input type="password" value="${typed}">';`,
+  ),
+  '/closed-frame': doc(
+    `<div style="height: 9000px"></div><iframe title="Lazy" loading="lazy" sandbox src="/ignores-query"></iframe>`,
+  ),
+  '/other-frames': doc(
+    `<iframe src="data:text/html,words"></iframe><iframe src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>"></iframe><iframe src="data:text/xml,<a/>"></iframe><iframe src="data:text/plain,words"></iframe><iframe sandbox src="/ignores-query"></iframe><iframe src="/nothing-here"></iframe><iframe src="/no-content"></iframe><iframe src="http://127.0.0.1:1/"></iframe><iframe></iframe>`,
+  ),
+});
 
 const differing = (kind: string, later: boolean) => {
   if (kind === 'frames') {
@@ -210,6 +306,7 @@ before(async () => {
       response.writeHead(200, { 'content-type': 'application/json', ...headers }).end(JSON.stringify(value));
     if (pathname.startsWith('/api/never')) return;
     if (pathname === '/api/login') logins++;
+    if (pathname === '/drops.gif') return void response.writeHead(404, { 'set-cookie': `sid=${word}; Max-Age=0` }).end();
     if (pathname === '/api/hop-set') {
       return void response.writeHead(302, { location: '/api/hop-end', 'set-cookie': `sid=${word}; Max-Age=0` }).end();
     }
@@ -228,6 +325,7 @@ before(async () => {
         : pathname === '/differs'
           ? differing(searchParams.get('v')!, loads++ > 0)
           : pages[pathname];
+    if (pathname === '/no-content') return void response.writeHead(204).end();
     if (html === undefined) return void response.writeHead(404).end();
     const cookie: Record<string, string> =
       pathname === '/server-cookie' || pathname === '/refusal-line' ? { 'set-cookie': `sid=${word}; Path=/` } : {};
@@ -489,6 +587,23 @@ test('a token that changes with every load records when its path is noise, and n
   await absent(result.output, ...rolled);
 });
 
+test('a secret that no rule finds is not stored at a noise path with "keep": false', async () => {
+  const noise = ['page', 'plain'].map((name) =>
+    name === 'page' ? { layer: 'effects', path: 'gets[0].query.page[0]' } : { layer: 'effects', path: 'requests[0].body.plain', keep: false },
+  );
+  await suite('never-kept', '/noise-parts', [fill('Field', 'Ada'), click('Go')], { noise: [...noise, ...['session', 'said', 'held', 'web'].map((name) => ({
+    layer: 'effects', path: name === 'session' ? 'gets[0].query.session[0]' : `requests[0].body.${name}`,
+  }))] });
+  await recorded('never-kept');
+  const tape = JSON.parse(await readFile(join(recordingOf('never-kept'), 'tape.json'), 'utf8'));
+  const posted = tape.find((entry: any) => entry.method === 'POST');
+  assert.deepEqual(posted.body.plain, { $aa: 'noise', kind: 'string' });
+  const read = tape.find((entry: any) => entry.method === 'GET');
+  assert.deepEqual(read.url.query.page, ['Plain']);
+  const gated = await run('gate', 'never-kept', '--source', 'never-kept', '--url', url);
+  assert.equal(gated.status, 0, gated.output);
+});
+
 test('at a noise path the tape never keeps a typed value, a secret or a value under a secret name', async () => {
   const paths = ['gets[0].query.session[0]', 'gets[0].query.page[0]', ...['said', 'held', 'web', 'plain'].map((key) => `requests[0].body.${key}`)];
   const noise = paths.map((path) => ({ layer: 'effects', path }));
@@ -593,6 +708,94 @@ test('keys that go to another element while a password field has the focus recor
   assert.ok(!failed.output.includes('types into'), failed.output);
 });
 
+test('a secret field in a frame is a finding, also in a frame of another site, an empty one is not', { timeout: 120_000 }, async () => {
+  for (const kind of ['same', 'cross']) {
+    await suite(`framed-${kind}`, `/framed?v=${kind}`);
+    await refused(`framed-${kind}`, typed, 'step 1, layer dom, path frame[1]/html[1]/body[1]/main[1]/input[1]["props"]["value"]: secret-field');
+  }
+  await suite('framed-empty', '/framed?v=empty');
+  await recorded('framed-empty');
+});
+
+test('a key that goes into a secret field of a frame is stopped there and the case is refused', async () => {
+  logins = 0;
+  await suite('framed-typed', '/framed?v=typed', [press('Sign in', 'q', 'heading')]);
+  await refused('framed-typed', 'no such text', 'step 2, the case types into a password, one-time code or card field: heading "Sign in"');
+  assert.equal(logins, 0);
+});
+
+test('a field that turns secret in its input handler is refused, also when the handler leaves, and sends nothing at once', { timeout: 120_000 }, async () => {
+  for (const kind of ['sync', 'leaves', 'removes']) {
+    logins = 0;
+    await suite(`turns-${kind}`, `/turns?v=${kind}`, [fill('Passphrase')]);
+    await refused(`turns-${kind}`, typed, 'step 2, the case types into a password, one-time code or card field: textbox "Passphrase"');
+    assert.equal(logins, 0, kind);
+  }
+});
+
+test('a value that only its name shows as a secret is not in the line about a failed step', async () => {
+  await suite('named-line', '/named-line', [click('Keep'), click('Go')]);
+  const output = await refused('named-line', word, /step 2, layer effects, path storage\["token"\]: named-value/, 'a line is left out, it holds a detected secret: named-value');
+  assert.ok(!output.includes('/api/never/'), output);
+});
+
+test('a credential that one case sends refuses the recording of another case that holds it, recorded before or after', async () => {
+  for (const [name, first, second] of [['shared-later', '/shows-word', '/sends-word'], ['shared-earlier', '/sends-word', '/shows-word']]) {
+    await suite(name, first, [], {}, 'a-first');
+    await suite(name, second, [], {}, 'b-second');
+    const result = await record(name);
+    assert.equal(result.status, 1, result.output);
+    const [holds, sends] = first === '/shows-word' ? ['a-first', 'b-second'] : ['b-second', 'a-first'];
+    assert.match(result.output, new RegExp(`FAIL {2}${holds}\\n {6}refused, a detected secret:\\n(?: {6}.*\\n)*? {6}step 1, layer dom, path .*: credential`));
+    assert.match(result.output, /Recorded 1 of 2 cases/);
+    assert.equal(await exists(recordingOf(name, holds)), false);
+    assert.equal(await exists(recordingOf(name, sends)), true);
+    assert.ok(!result.output.includes(word), result.output);
+    await rm(recordingOf(name, sends), { recursive: true });
+  }
+});
+
+test('a credential of a later case that an earlier tape keeps at a noise path refuses that recording', async () => {
+  const noise = [{ layer: 'effects', path: 'gets[0].query.ref[0]' }];
+  await suite('kept-earlier', '/reads-word', [], { noise }, 'a-first');
+  await suite('kept-earlier', '/sends-word', [], {}, 'b-second');
+  const result = await record('kept-earlier');
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /FAIL {2}a-first\n {6}refused, a detected secret:\n {6}step 1, layer tape, path \[0\]\["url"\]\["query"\]\["ref"\]\[0\]: credential/);
+  assert.equal(await exists(recordingOf('kept-earlier', 'a-first')), false);
+  assert.ok(!result.output.includes(word), result.output);
+  await rm(recordingOf('kept-earlier', 'b-second'), { recursive: true });
+});
+
+test('a run waits for the set-cookie header of an answer that arrives late', async () => {
+  const browser = await launchBrowser();
+  try {
+    const slow = {
+      newContext: async (options: Parameters<Browser['newContext']>[0]) => {
+        const context = await browser.newContext(options);
+        const on = context.on.bind(context) as (event: string, listener: (value: any) => void) => unknown;
+        context.on = ((event: string, listener: (value: any) => void) =>
+          on(event, event !== 'response' ? listener : (response) =>
+            listener({
+              headerValue: async (name: string) => {
+                const value = await response.headerValue(name);
+                await new Promise((resolve) => setTimeout(resolve, 1500));
+                return value;
+              },
+            }))) as typeof context.on;
+        return context;
+      },
+    } as unknown as Browser;
+    const seen = newSeen();
+    const testCase = { format: 'angular-anything/case@1', id: 'late', viewport: { width: 800, height: 600 }, steps: [{ action: 'goto', path: '/late-cookie' }] } as Case;
+    const done = await runCase(slow, testCase, new URL(url), undefined, undefined, undefined, undefined, seen);
+    assert.equal(done.error, undefined);
+    assert.deepEqual([...seen.credentials], [word]);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('a cookie that a hop of a redirect sets and drops at once is a credential', async () => {
   await suite('hop-secret', '/hop-secret');
   await refused('hop-secret', word, 'the answer sets a cookie: GET /api/hop-set', /layer tape, path \[0\]\["answer"\]\["body"\]\["ref"\]: credential/);
@@ -657,4 +860,81 @@ test('no message of a failed run holds the query of --url or of a navigation', {
   assert.equal(away.status, 1, away.output);
   assert.match(away.output, /the navigation to \/api\/never\/page (did not load|had not loaded)|the navigation to \/api\/never\/page /);
   await absent(away.output, 'abcdefgh12345678');
+});
+
+test('a field that turns secret later in the typing step is refused and sends nothing', { timeout: 120_000 }, async () => {
+  for (const kind of ['timer', 'frame', 'answer', 'back']) {
+    logins = 0;
+    await suite(`later-${kind}`, `/turns-later?v=${kind}`, [fill('Passphrase')]);
+    await refused(`later-${kind}`, typed, 'step 2, the case types into a password, one-time code or card field: textbox "Passphrase"');
+    assert.equal(logins, 0, kind);
+  }
+});
+
+test('a typed field that a later step turns into a password field is watched no more, and its requests are sent', { timeout: 120_000 }, async () => {
+  const variants: [string, Step[], number][] = [
+    ['reused', [fill('Field', 'nickname'), click('Next'), click('Done')], 2],
+    ['reused-frame', [press('Sign in', 'q', 'heading'), click('Next')], 1],
+  ];
+  for (const [name, steps, sent] of variants) {
+    logins = 0;
+    await suite(name, `/${name}`, steps);
+    await recorded(name);
+    assert.equal(logins, sent, name);
+    const tape = JSON.parse(await readFile(join(recordingOf(name), 'tape.json'), 'utf8'));
+    assert.equal(tape.filter((each: { method: string }) => each.method === 'POST').length, sent, name);
+  }
+});
+
+test('a frame that has not loaded costs no wait and is still searched', { timeout: 120_000 }, async () => {
+  const browser = await launchBrowser();
+  try {
+    for (const [variant, fields] of [['', []], ['filled', ['frame[1]/html[1]/body[1]/input[1]']]] as const) {
+      const testCase = {
+        format: 'angular-anything/case@1',
+        id: 'lazy',
+        viewport: { width: 800, height: 600 },
+        steps: [{ action: 'goto', path: `/lazy-frame?v=${variant}` }, press('Go', 'a', 'button')],
+      } as unknown as Case;
+      const started = Date.now();
+      const done = await runCase(browser, testCase, new URL(url), undefined, undefined, undefined, undefined, newSeen());
+      assert.ok(Date.now() - started < 12_000, `${Date.now() - started} ms`);
+      assert.equal(done.error, undefined);
+      assert.deepEqual(done.refusals, []);
+      assert.deepEqual(done.steps.map((step) => step.secretFields), [fields, fields]);
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a frame that cannot be searched for secret fields refuses the case', { timeout: 120_000 }, async () => {
+  await suite('closed-frame', '/closed-frame');
+  await refused('closed-frame', 'no such text', 'step 1, a frame could not be searched for secret fields: frame[1]');
+});
+
+test('empty, failed, sandboxed and other kinds of frames are searched', { timeout: 120_000 }, async () => {
+  await suite('other-frames', '/other-frames');
+  await recorded('other-frames');
+});
+
+test('a recording written before a later case throws is checked against the credentials all the same', { timeout: 120_000 }, async () => {
+  await suite('thrown', '/shows-word', [], {}, 'a-first');
+  await suite('thrown', '/sends-word', [], {}, 'b-second');
+  await suite('thrown', '/ignores-query', [], {}, 'c-third');
+  const locked = join(recordingOf('thrown', 'c-third'), 'locked');
+  await mkdir(locked, { recursive: true });
+  await writeFile(join(locked, 'file'), 'x');
+  await chmod(locked, 0o555);
+  try {
+    const result = await record('thrown');
+    assert.notEqual(result.status, 0, result.output);
+    assert.match(result.output, /EACCES|EPERM/);
+    assert.match(result.output, /FAIL {2}a-first\n {6}refused, a detected secret:/);
+    assert.equal(await exists(recordingOf('thrown', 'a-first')), false);
+    assert.ok(!result.output.includes(word), result.output);
+  } finally {
+    await chmod(locked, 0o755);
+    await rm(join(root, 'recordings', 'thrown'), { recursive: true, force: true });
+  }
 });

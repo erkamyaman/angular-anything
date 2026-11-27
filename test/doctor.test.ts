@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { doctor, PLAYWRIGHT_VERSION } from '../src/doctor.ts';
@@ -50,7 +51,7 @@ test('doctor exits 1 for an old Node, another Playwright, a browser that does no
   assert.equal(missing.code, 1);
   assert.deepEqual(missing.lines.slice(2), [
     "FAIL  Chromium does not launch: Error: Executable doesn't exist",
-    '      Run: pnpm exec playwright install chromium',
+    `      Run: node "${join(dirname(createRequire(import.meta.url).resolve('playwright/package.json')), 'cli.js')}" install chromium`,
   ]);
 
   const blank = await check({ ...good, launch: async () => ({ title: '', version: '159' }) });
@@ -70,6 +71,10 @@ test('the command exits 0 with the real browser and 1 when Playwright has no bro
     const none = run({ PLAYWRIGHT_BROWSERS_PATH: empty });
     assert.equal(none.status, 1, none.stdout + none.stderr);
     assert.match(none.stdout, /^FAIL {2}Chromium does not launch/m);
+    const [, installer] = /^ {6}Run: node "(.+)" install chromium$/m.exec(none.stdout)!;
+    const listed = spawnSync(process.execPath, [installer, 'install', '--dry-run', 'chromium'], { cwd: empty, encoding: 'utf8' });
+    assert.equal(listed.status, 0, listed.stdout + listed.stderr);
+    assert.match(listed.stdout, /chromium/i);
   } finally {
     await rm(empty, { recursive: true, force: true });
   }

@@ -191,11 +191,14 @@ export async function replay(options: Replaying): Promise<number> {
           item.steps.push(stepReport(index + 1, (redact ? redactStep : describeStep)(testCase.steps[index]), step, screenshot, layers, step.unread, reads));
         }
         if (drift) {
-          const state = (differs: boolean, error: string | undefined): DriftState =>
-            differs ? 'differs' : unreachable(error) ? 'not checked' : error !== undefined ? 'differs' : 'matches';
+          const state = (differs: boolean, { error, hung, own }: Awaited<ReturnType<typeof runCase>>): DriftState => {
+            if (differs) return 'differs';
+            if (error === undefined) return 'matches';
+            return !own && (hung || unreachable(error)) ? 'not checked' : 'differs';
+          };
           item.drift = {
-            original: state(departed !== undefined, again?.error),
-            port: state(departs, run.error),
+            original: state(departed !== undefined, again!),
+            port: state(departs, run),
             ...(resized && !departs ? { sizes: 'differ' as const } : {}),
           };
         }

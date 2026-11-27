@@ -56,7 +56,7 @@ export function distinct(found: Found[]): Distinct {
   const groups = new Map<string, { group: Group; seen: Set<string> }>();
   for (const { case: id, step, difference } of found) {
     const { layer, kind, path, expected, actual, at } = difference;
-    const collapsed = collapseIndices(path);
+    const collapsed = path.startsWith('tape ') ? path : collapseIndices(path);
     const key = sha256(JSON.stringify([layer, collapsed, kind])).slice(0, 8);
     let entry = groups.get(key);
     if (!entry) {

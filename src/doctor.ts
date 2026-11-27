@@ -1,7 +1,10 @@
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import playwrightPackage from 'playwright/package.json' with { type: 'json' };
 
 export const PLAYWRIGHT_VERSION = '1.65.1';
+const INSTALLER = join(dirname(fileURLToPath(import.meta.resolve('playwright/package.json'))), 'cli.js');
 
 export type Found = {
   node: string;
@@ -42,7 +45,7 @@ export async function doctor(found: Found = real, print: (line: string) => void 
     report(title === 'doctor', `Chromium ${version} launches headless and loads a page`);
   } catch (error) {
     report(false, `Chromium does not launch: ${String(error).split('\n')[0]}`);
-    print('      Run: pnpm exec playwright install chromium');
+    print(`      Run: node "${INSTALLER}" install chromium`);
   }
 
   return failed ? 1 : 0;

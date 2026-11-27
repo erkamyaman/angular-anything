@@ -270,6 +270,24 @@ on('go', async () => {
     `<button id="go">Go</button>`,
     `on('go', () => { fetch('/api/stream'); fetch('/api/held', { method: 'POST' }); });`,
   ),
+  '/loop': doc(`<button id="go">Go</button>`, `on('go', () => { fetch('/api/loop').catch(() => {}); });`),
+  '/blobs': doc(
+    `<button id="go">Go</button>`,
+    `on('go', () => {
+  for (const size of [4000000, 1, 1000000, 2, 500000, 3]) fetch('/api/echo', { method: 'POST', body: new Blob(['x'.repeat(size)]) });
+});`,
+  ),
+  '/modes': doc(
+    `<p id="out">?</p><button id="go">Go</button>`,
+    `on('go', async () => {
+  document.cookie = 'theme=dark; path=/';
+  const seen = [];
+  for (const url of ['/api/seen', '/api/seen-moved']) {
+    for (const credentials of ['omit', 'same-origin']) seen.push(await (await fetch(url, { credentials })).json());
+  }
+  $('out').textContent = seen.join(' ');
+});`,
+  ),
   '/while-closing': doc(
     `<button id="go">Go</button>`,
     `on('go', () => { window.open('').addEventListener('pagehide', () => fetch('/api/echo?late=1')); });`,
@@ -317,6 +335,13 @@ function api(request: IncomingMessage, response: ServerResponse) {
     }
     if (pathname === '/api/hop-first') return void response.writeHead(302, { location: '/api/hop-second' }).end();
     if (pathname === '/api/hop-second') return void response.writeHead(200, { 'set-cookie': 'sid=cookievalue' }).end();
+    if (pathname === '/api/loop') return void response.writeHead(302, { location: '/api/loop' }).end();
+    if (pathname === '/api/seen-moved') return void response.writeHead(302, { location: '/api/seen' }).end();
+    if (pathname === '/api/seen-away') return void response.writeHead(302, { location: '/api/seen' }).end();
+    if (pathname === '/api/seen') {
+      const { cookie = '', 'sec-fetch-site': site, 'sec-fetch-mode': mode, 'sec-fetch-dest': dest } = request.headers;
+      return void json([cookie || 'no-cookie', site, mode, dest].join(','));
+    }
     if (pathname === '/api/very-slow') return void setTimeout(() => json(1), 1600);
     if (pathname === '/api/slow-read') return void setTimeout(() => json(1), 1500);
     if (pathname === '/api/target') return void json(`${request.method} ${Buffer.concat(chunks)}`);
@@ -831,9 +856,43 @@ test('a mutation of the tape that the port cancels at once, leaves out or sends 
   for (const variant of ['abort', 'none']) {
     await fails('save', variant, /step 2 of 2[\s\S]*tape POST \/api\/save[\s\S]*the page did not send it/);
   }
-  const beacon = await run('gate', 'save', '--source', 'save', '--url', `${url}/?v=beacon`);
-  assert.equal(beacon.status, 1, beacon.output);
-  assert.match(beacon.output, /tape POST \/api\/save[\s\S]*the page did not send it/);
+  await fails('save', 'beacon', /tape POST \/api\/save[\s\S]*the page did not send it/);
+});
+
+test('a beacon reaches the server in the first run of record and in no run that the tape answers', async () => {
+  await suite('beacon', '/save', [click('Go')]);
+  const recorded = await record('beacon', 'beacon');
+  assert.equal(recorded.status, 0, recorded.output);
+  assert.deepEqual(hits, ['POST /api/save']);
+  const output = await passes('beacon', 'beacon', '--original-url', `${url}/?v=beacon`);
+  assert.match(output, /^PASS {2}beacon /m);
+});
+
+test('record refuses an answer that redirects more than 20 times and sends nothing past the twentieth', async () => {
+  await suite('loop', '/loop', [click('Go')]);
+  const result = await record('loop');
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /step 2, the answer redirects more than 20 times: GET \/api\/loop$/m);
+  assert.equal(hits.length, 21, `${hits.length}`);
+});
+
+test('POSTs of blobs to one URL are taped in the order in which the page sent them', async () => {
+  await suite('blobs', '/blobs', [click('Go')]);
+  const recorded = await record('blobs');
+  assert.equal(recorded.status, 0, recorded.output);
+  assert.deepEqual((await tapeOf('blobs')).map((entry: any) => entry.body.length), [4000000, 1, 1000000, 2, 500000, 3]);
+  await passes('blobs');
+});
+
+test('record sends no cookie where the page asks to omit credentials, and the fetch metadata headers of a browser', async () => {
+  await suite('modes', '/modes', [click('Go')]);
+  const recorded = await record('modes');
+  assert.equal(recorded.status, 0, recorded.output);
+  const said = (cookie: string) => `${cookie},same-origin,cors,empty`;
+  assert.deepEqual(
+    (await tapeOf('modes')).map((entry: any) => JSON.parse(entry.answer.body)),
+    [said('no-cookie'), said('theme=dark'), said('no-cookie'), said('theme=dark')],
+  );
 });
 
 test('a mutation that only the first run of record sends is named as missing', async () => {
@@ -935,4 +994,24 @@ test('a request belongs to the step in which the page sent it, also when the nex
   assert.equal(done.error, undefined);
   assert.deepEqual(done.tape.map((entry) => [entry.step, entry.url.query.late?.[0]]), [[2, '1']]);
   assert.equal(done.steps[1].observation.effects.requests.length, 0);
+});
+
+test('a hop of a redirect gets the cookies of its own address, and none after omit', async () => {
+  pages['/hop-paths'] = doc(
+    `<p id="out">?</p><button id="go">Go</button>`,
+    `on('go', async () => {
+  document.cookie = 'top=1; path=/';
+  document.cookie = 'first=1; path=/api/seen-moved';
+  document.cookie = 'last=1; path=/api/seen';
+  const same = await (await fetch('/api/seen-away')).json();
+  const own = await (await fetch('/api/seen-moved')).json();
+  const omitted = await (await fetch('/api/seen-moved', { credentials: 'omit' })).json();
+  $('out').textContent = [same, own, omitted].join(' ');
+});`,
+  );
+  await suite('hop-paths', '/hop-paths', [click('Go')]);
+  const recorded = await record('hop-paths');
+  assert.equal(recorded.status, 0, recorded.output);
+  const cookies = (await tapeOf('hop-paths')).map((entry: any) => JSON.parse(entry.answer.body).split(',')[0]);
+  assert.deepEqual(cookies, ['last=1; top=1', 'last=1; top=1', 'no-cookie']);
 });

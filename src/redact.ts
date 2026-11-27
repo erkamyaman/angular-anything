@@ -56,9 +56,10 @@ export function redactPath(layer: Layer, path: string): string {
     else {
       const { key } = token;
       const next = tokens[at + 1];
+      const element = at === 0 || tokens[at - 1] === '/' || (at === 1 && before === 'attributes');
       let keep: boolean;
       if (elements && (next === '/' || (typeof next === 'object' && 'index' in next) || key.startsWith('::'))) {
-        keep = key === 'text()' || PSEUDO.has(key) || /^[a-zA-Z][a-zA-Z0-9]*$/.test(key);
+        keep = element && (key === 'text()' || PSEUDO.has(key) || /^[a-zA-Z][a-zA-Z0-9]*$/.test(key));
       } else if (elements) {
         keep = STYLED.has(before) ? /^-?[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(key) : KEPT.has(key);
       } else {
