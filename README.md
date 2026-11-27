@@ -24,6 +24,33 @@ Move your app to Angular, and prove it still behaves the same.
 <p align="center"><sub>Your safety comes first: sponsors get a logo and a link here, nothing more. No paid recommendations and no setup guides for third-party AI API resellers, so nothing here steers your code, keys or data somewhere you didn't choose.</sub></p>
 
 <p align="center">
+  <a href="https://coderabbit.link/er-kam">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/sponsors/company-dark.svg">
+      <img src="docs/assets/sponsors/company-light.svg" width="800" alt="Company sponsor: CodeRabbit">
+    </picture>
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://www.atakdomain.com/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/sponsors/domain-dark.svg">
+      <img src="docs/assets/sponsors/domain-light.svg" width="800" alt="Domain sponsor: Atak Domain">
+    </picture>
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/sponsors/erkamyaman">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/sponsors/sponsors-dark.svg">
+      <img src="docs/assets/sponsors/sponsors-light.svg" width="800" alt="Sponsors: Santosh Yadav, Hakan Soytürk, Ali Yilmaz, Ashley Hunter, Fatih Uzuntaş, bugrcvi">
+    </picture>
+  </a>
+</p>
+
+<p align="center">
   <a href="https://github.com/sponsors/erkamyaman"><img src="https://img.shields.io/badge/Become_a_sponsor-%E2%9D%A4-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Become a sponsor"></a>
   <a href="https://buymeacoffee.com/erkamyaman"><img src="https://img.shields.io/badge/Buy_me_a_coffee-%E2%98%95-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black" alt="Buy me a coffee"></a>
 </p>
@@ -34,7 +61,16 @@ Move your app to Angular, and prove it still behaves the same.
 
 ## Quick start
 
-Angular Anything is not on npm yet, so run it from a clone. You need Node 24 or newer and pnpm.
+Paste this into your coding agent:
+
+```text
+Read https://raw.githubusercontent.com/erkamyaman/angular-anything/main/llms.txt, install Angular Anything, record this app, port it to Angular, and keep fixing the port until the gate passes.
+```
+
+> [!TIP]
+> **Agents:** read [llms.txt](https://github.com/erkamyaman/angular-anything/blob/main/llms.txt) for the install steps, every command and the porting workflow.
+
+Or try it yourself. Angular Anything is not on npm yet, so run it from a clone. You need Node 24 or newer and pnpm.
 
 ```sh
 git clone https://github.com/erkamyaman/angular-anything
@@ -53,6 +89,18 @@ pnpm aa gate fixture --source react --url 'http://localhost:4104/?bug=aria'    #
 ```
 
 ## How it works
+
+```mermaid
+flowchart LR
+  cases["Cases<br/>what users do"] --> record["record<br/>runs the original twice"]
+  original["Original app<br/>React, Vue, AngularJS"] --> record
+  record --> lock[("Locked recording")]
+  lock --> gate["gate<br/>replays every case"]
+  port["Angular port<br/>you or your agent"] --> gate
+  gate -->|any difference| fix["Fix the port"]
+  fix --> port
+  gate -->|everything matches| done(["Done"])
+```
 
 1. **Describe** what users do, as short cases ([an example](https://github.com/erkamyaman/angular-anything/blob/main/cases/fixture/add-task/case.json)).
 2. **Record** the original (React, Vue or AngularJS). `record` runs each case twice and locks what happened.

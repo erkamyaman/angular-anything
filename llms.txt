@@ -1,0 +1,70 @@
+# Angular Anything
+
+> Move a React, Vue or AngularJS app to modern Angular, and prove it still behaves the same. The tool records the original in Chromium and fails the Angular port on any difference it compares. It does not write the port: you do.
+
+Status: early. Not on npm. Tested on macOS only. Read https://github.com/erkamyaman/angular-anything/blob/main/docs/reference.md before relying on it.
+
+## Install
+
+Needs Node 24 or newer and pnpm.
+
+    git clone https://github.com/erkamyaman/angular-anything
+    cd angular-anything
+    pnpm install
+    pnpm exec playwright install chromium
+
+In the commands below, `aa` stands for `node <path to the clone>/src/cli.ts`. Run it from the folder that holds `cases/`, usually the root of the app you port.
+
+## Commands
+
+    aa doctor
+    aa record <suite> --source <name> --url <original-url>
+    aa gate <suite> --source <name> --url <port-url> [--original-url <original-url>]
+    aa replay <suite> --source <name> --url <port-url>
+    aa drift <suite> --source <name> --url <port-url> --original-url <original-url>
+
+- `doctor` checks Node, Playwright and Chromium.
+- `record` runs each case twice against the original and writes `recordings/<source>`.
+- `gate` checks the lock, replays every case against the port and writes `reports/<source>`.
+- `replay` is `gate` without the lock check.
+- `drift` says whether the original changed or the port regressed.
+- `--original-url` also compares sizes, positions and screenshots (screenshots never fail the gate).
+- `--redact` (`replay`, `gate`) writes shapes only, no values.
+- `--original-source <dir> --port-source <dir>` (`gate`) fails a port that holds recorded values the original source does not hold.
+
+Exit codes of `gate` and `replay`: 0 everything matches, 1 mismatch or refused recording, 2 wrong command line.
+
+## A case
+
+`cases/<suite>/<id>/case.json`:
+
+    {
+      "format": "angular-anything/case@1",
+      "id": "add-task",
+      "description": "Add a task",
+      "viewport": { "width": 1024, "height": 768 },
+      "steps": [
+        { "action": "goto", "path": "/" },
+        { "action": "fill", "target": { "role": "textbox", "name": "New task" }, "value": "Call mom" },
+        { "action": "click", "target": { "role": "button", "name": "Add" } },
+        { "action": "advance", "frames": 125 }
+      ]
+    }
+
+Actions: `goto`, `click`, `dblclick`, `hover`, `check`, `uncheck`, `fill`, `press`, `reload`, `advance`. Targets are found by accessibility role and name, with `index` and `within` when more than one matches. The clock of the page is paused and moves only with `advance` (one frame is 16 ms).
+
+## Porting workflow
+
+1. Start the original app and its backend with test data. `record` sends real requests to it, writes included, and does not reset it.
+2. Write cases for what users do. Start small.
+3. Run `aa record`. If it refuses (the two runs differ, a secret is found, the page does something the tape cannot hold), read the message and the reference. Do not remove a check to make it pass.
+4. Port the app to Angular. Mount each component on an element the original already has, so that no wrapper element or extra attribute appears (reference, "Choosing the selector of a component in the Angular port").
+5. Start the port and run `aa gate`. Fix the port, not the recording, until it exits 0.
+6. Run `aa gate` with `--original-url` while the original still runs.
+
+## Rules for agents
+
+- Never edit anything under `recordings/` by hand.
+- Never copy recorded values into the port to make the gate pass.
+- Ask the user before adding a mask or noise entry: it makes the gate check less.
+- Do not record against production data or with real secrets.
