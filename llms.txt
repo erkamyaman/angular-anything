@@ -81,14 +81,26 @@ Actions: `goto`, `click`, `dblclick`, `hover`, `check`, `uncheck`, `fill`, `pres
 
 Both addresses are ones you build into a test backend. Never add them to a production one.
 
+## Write the port the Angular way
+
+The gate checks behaviour only, not code quality. While writing the port, follow Angular's own guidance:
+
+- Style guide: https://angular.dev/style-guide
+- Agent skills from the Angular team, `angular-developer` and `angular-new-app`: https://github.com/angular/skills (install with `npx skills add https://github.com/angular/skills`, ask the user first)
+- The MCP server of the Angular CLI, `ng mcp`, for documentation and best practices that match the project's version: https://angular.dev/ai/mcp
+- The latest Angular the tool is tested with (22): standalone components, signals, signal inputs and `@if`/`@for`.
+
+Where Angular guidance and the original's behaviour or markup conflict, keep the behaviour: the gate decides. Tell the user where that happened.
+
 ## Porting workflow
 
 1. Start the original app and its backend with test data. `record` sends real requests to it, writes included, and does not reset it (see "Backend state and error states").
 2. Write the cases yourself, do not wait for the user to describe them. Read the routes, forms, buttons and requests in the code, use the running app, and write one case per thing a user can do, including empty, error and reload states. Start small, then tell the user which flows are covered and which are not.
 3. Run `aa record`. If it refuses (the two runs differ, a secret is found, the page does something the tape cannot hold), read the message and the reference. Do not remove a check to make it pass.
-4. Port the app to Angular. Mount each component on an element the original already has, so that no wrapper element or extra attribute appears (reference, "Choosing the selector of a component in the Angular port").
+4. Port the app to Angular (see "Write the port the Angular way"). Mount each component on an element the original already has, so that no wrapper element or extra attribute appears (reference, "Choosing the selector of a component in the Angular port").
 5. Start the port and run `aa gate` with `--original-source` and `--port-source`. Fix the port, not the recording, until it exits 0.
 6. Run `aa gate` again, with `--original-url` added, while the original still runs.
+7. After any cleanup of the port's code, run both gates again.
 
 ## Rules for agents
 
