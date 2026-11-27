@@ -84,7 +84,7 @@ angular-anything doctor   # prints the command that installs Chromium if it is m
 > [!TIP]
 > **Agents:** read [llms.txt](https://github.com/erkamyaman/angular-anything/blob/main/llms.txt) for the install steps, every command and the porting workflow.
 
-Want to see it fail and pass first? The [sample apps](https://github.com/erkamyaman/angular-anything/blob/main/docs/reference.md#commands) run from a clone.
+Want to see it fail and pass first? The [sample apps](https://github.com/erkamyaman/angular-anything/blob/main/docs/reference.md#sample-apps-from-a-clone) run from a clone.
 
 ## How it works
 
@@ -106,7 +106,7 @@ Want to see it fail and pass first? The [sample apps](https://github.com/erkamya
 
 **Secrets.** `record` refuses to save a case in which it detects a secret (`credential`, `jwt`, `pem`, `bearer-or-basic`, `url-password`, `named-value`, `secret-field`). Detection has limits, so record against test data.
 
-**Limits.** Early software, tested on macOS only. Read the [reference](https://github.com/erkamyaman/angular-anything/blob/main/docs/reference.md) before relying on it.
+**Limits.** Early software, tested on macOS only. Loading and pending UI is never compared, because requests are answered before a step is observed. Read the [reference](https://github.com/erkamyaman/angular-anything/blob/main/docs/reference.md) before relying on it.
 
 ## Notes
 

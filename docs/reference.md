@@ -4,52 +4,42 @@
 
 Tested on macOS only. Linux is untested. The fixes of 2026-11-27 were reviewed once. What that review found is fixed, and those fixes have not had a second review.
 
-## What exists so far
-
-- A pnpm workspace with one install for the tool, the fixtures and the trial packages.
-- `src/`, the CLI and the verifier. `doctor`, `record`, `replay`, `gate` and `drift` work.
-- `test/`, the unit tests and end-to-end tests that drive the CLI against small pages.
-- `fixtures/react`, `fixtures/vue` and `fixtures/angularjs`, the Tasks fixture written three times as an original, and `fixtures/angular`, its Angular port. The port misbehaves on purpose when the URL has `?bug=<name>`.
-- `fixtures/shared/fixture.css`, the one stylesheet that all four load.
-- `fixtures/server.ts`, which serves the built fixtures and the mock API. `record` asks that API, `gate` and `replay` do not (see "The network tape").
-- `cases/fixture`, nineteen cases for the Tasks fixture.
-- `recordings/react`, `recordings/vue` and `recordings/angularjs`, the locked recordings of the three originals.
-- `trials/todomvc` and `trials/sonner`, the two trial ports (an original and its Angular port each), with `cases/todomvc`, `cases/sonner`, `recordings/todomvc-react` and `recordings/sonner-react`.
-
 ## Commands
 
-Run these from the root of the repository. You need Node 24 or newer and pnpm.
+These are for the published package. You need Node 24 or newer.
 
 ```sh
-pnpm install                            # the tool, the four fixtures and the three trial packages
-pnpm exec playwright install chromium   # the Chromium build that Playwright 1.65.1 expects
-pnpm aa doctor                          # checks Node, the Playwright version and Chromium
-pnpm fixtures:build                     # builds each fixture into fixtures/<name>/dist
-pnpm fixtures:serve                     # serves the fixtures and the mock API
-pnpm fixtures:serve --only react        # serves one: react, vue, angularjs, angular or stub
-pnpm typecheck
-pnpm test
-pnpm build                              # compiles src into dist, which the package ships (packing runs it)
+npm install -g angular-anything
+angular-anything doctor   # checks Node, Playwright and Chromium
+angular-anything record <suite> --source <name> --url <original-url>
+angular-anything gate <suite> --source <name> --url <port-url>
+angular-anything gate <suite> --source <name> --url <port-url> --original-url <original-url>   # also sizes, positions and screenshots
+angular-anything gate <suite> --source <name> --url <port-url> --redact                        # shapes only, no values and no screenshots
+angular-anything gate <suite> --source <name> --url <port-url> --original-source <dir> --port-source <dir>
+angular-anything replay <suite> --source <name> --url <port-url>                               # gate without the lock check
+angular-anything drift <suite> --source <name> --url <port-url> --original-url <original-url>  # which side moved
 ```
 
-The fixture server listens on 127.0.0.1: React on port 4101, Vue on 4102, AngularJS on 4103, Angular on 4104, and a stub page with an empty `<main>` on 4105.
+Run them from the folder that holds `cases/<suite>`. `recordings/<source>` and `reports/<source>` are written below the same folder. `record` and `gate` run every case of the suite, and there is no option that runs one case. In one trial 24 cases took about 2.5 minutes to record and 2 minutes to gate, so allow a long timeout.
 
-With the fixtures built and served:
+`record` exits 0 when every case was recorded. Two suites can share a source, but not a case id within it: `record` fails a case whose folder below `recordings/<source>` holds the recording of another suite, and leaves that recording as it is. It exits 1, and leaves no recording of that case (also not the one from before), when the two runs of the original differ where the case does not allow it (see "Masks and noise"), when the page does something the tape cannot hold (see "The network tape"), and when it finds a secret (see "Secrets"). `record` does not reset a backend: a case is recorded in the state the backend is in when the case starts (see "Backend state and error states"). `gate` and `replay` exit 0 when every step of every case matches the recording, 1 on a mismatch or a refused recording, and 2 on a wrong command line. Both print a summary and write it to `reports/<source>/summary.txt` next to `reports/<source>/report.json`. `gate` also exits 1 when `recordings/<source>` holds a recording of the suite whose case is gone, and `record` removes such a recording (it prints the case) and leaves the recordings of other suites alone, and removes nothing when the suite has no case at all. A command that stops at the command line (exit 2) removes the report of the source it names, so no report of an earlier run is left. `--source` and `--url` may be given once. The query of `--url` is added to the path of every `goto` as it is written. `replay`, `gate` and `drift` print and store `--url` and `--original-url` without their query (`recording.json` holds the `--url` of `record` as it was given). A `goto` path starts with one `/` and not with `//` or `/\`, so a case never leaves the page under test, and a case folder that is a symbolic link is refused by name. `doctor` exits 1 when Node, Playwright or Chromium is not what it needs. When Chromium does not launch, it prints the command that installs it with the Playwright the tool itself uses (`node "<path to playwright>/cli.js" install chromium`), which works from a checkout and from an installed package.
 
-```sh
-pnpm aa record fixture --source react --url http://localhost:4101             # runs the original twice, writes recordings/react
-pnpm aa gate fixture --source react --url http://localhost:4104               # checks the lock, then replays against the port
-pnpm aa replay fixture --source react --url http://localhost:4104             # the same without the lock check
-pnpm aa gate fixture --source react --url 'http://localhost:4104/?bug=aria'   # a seeded bug, exits 1
-pnpm aa gate fixture --source react --url http://localhost:4104 --original-url http://localhost:4101   # also sizes, positions and screenshots
-pnpm aa gate fixture --source react --url http://localhost:4104 --redact      # shapes only, no values and no screenshots
-pnpm aa gate fixture --source react --url http://localhost:4104 --original-source fixtures/react --port-source fixtures/angular
-pnpm aa drift fixture --source react --url http://localhost:4104 --original-url http://localhost:4101  # which side moved
+## Setting up the Angular port
+
+The port is a normal Angular project made with the Angular CLI. The tool is tested with Angular 22. The tool only needs the address of the running port, so `cases/` and `recordings/` can live in any folder you run it from. One layout that works, with every command run from `port/`:
+
+```text
+original/                    the app as it is
+port/                        the Angular project
+  src/
+  cases/<suite>/<id>/case.json
+  recordings/<source>/
+  reports/<source>/
 ```
 
-The sources are `react`, `vue` and `angularjs`. The seeded bugs are `double-event`, `missing-class`, `aria`, `text`, `request`, `storage`, `focus` and `style`.
+Angular removes white space between elements by default (`preserveWhitespaces` is `false`). Where the original has white space that the browser renders, for example between two inline elements or between labels that stand on separate lines, set `preserveWhitespaces: true` on the component and keep that space in the template. In one trial, a port without it failed all 24 cases on text missing from the DOM.
 
-`record` exits 0 when every case was recorded. Two suites can share a source, but not a case id within it: `record` fails a case whose folder below `recordings/<source>` holds the recording of another suite, and leaves that recording as it is. It exits 1, and leaves no recording of that case (also not the one from before), when the two runs of the original differ where the case does not allow it (see "Masks and noise"), when the page does something the tape cannot hold (see "The network tape"), and when it finds a secret (see "Secrets"). `record` does not reset a backend: a case is recorded in the state the backend is in when the case starts. `gate` and `replay` exit 0 when every step of every case matches the recording, 1 on a mismatch or a refused recording, and 2 on a wrong command line. Both print a summary and write it to `reports/<source>/summary.txt` next to `reports/<source>/report.json`. `gate` also exits 1 when `recordings/<source>` holds a recording of the suite whose case is gone, and `record` removes such a recording (it prints the case) and leaves the recordings of other suites alone, and removes nothing when the suite has no case at all. A command that stops at the command line (exit 2) removes the report of the source it names, so no report of an earlier run is left. `--source` and `--url` may be given once. The query of `--url` is added to the path of every `goto` as it is written. `replay`, `gate` and `drift` print and store `--url` and `--original-url` without their query (`recording.json` holds the `--url` of `record` as it was given). A `goto` path starts with one `/` and not with `//` or `/\`, so a case never leaves the page under test, and a case folder that is a symbolic link is refused by name. `doctor` exits 1 when Node, Playwright or Chromium is not what it needs. When Chromium does not launch, it prints the command that installs it with the Playwright the tool itself uses (`node "<path to playwright>/cli.js" install chromium`), which works from a checkout and from an installed package.
+Here the check for recorded values takes `--original-source ../original --port-source src` (see "Recorded values in the port"). For the selectors of components see "Choosing the selector of a component in the Angular port", and for the attributes and classes the comparison ignores see "The canonical DOM".
 
 ## Steps and targets
 
@@ -90,6 +80,8 @@ After each step the page settles and one observation is captured:
 - the dialogs and windows of the page, in the order in which they happened (see "Dialogs and windows")
 - a screenshot, which is reported and never fails the gate
 
+Loading and pending UI is never compared. A request of the page is answered before a step is observed, on the original and on the port, so what shows only while a request is in flight (a spinner, a "Loading..." text, a button that is disabled while saving) is in no observation and no screenshot. A port that lacks it passes. A step whose request gets no answer fails.
+
 In a recorded observation an element lists only the longhands whose value differs from its parent element. The `html` element lists all of them.
 
 ## The network tape
@@ -116,6 +108,15 @@ In a recorded observation an element lists only the longhands whose value differ
 - Not covered: the order of reads and mutations among each other beyond what the epochs tell, what the HTTP cache would have answered (routing switches the cache off), preflights, and an answer body that holds the origin of the recording (a port on another origin that follows such a URL fails).
 
 The tape holds answer bodies and request bodies as they are. Nothing is redacted: `record` refuses a case instead (see "Secrets").
+
+## Backend state and error states
+
+`record` resets no backend. The first run of each case sends its requests to the backend, writes included, so what one case writes is still there in the next case (cases run in the order of their ids) and in the next `record`. The second run of a case gets its `fetch` and XHR answers from the tape of the first. Pages, other files and posted forms come from the server in both runs.
+
+- To start each case from the same data, give the test backend a reset address and visit it first: `{ "action": "goto", "path": "/api/reset" }` as step 1, then a `goto` to the app. A `goto` is a page load, which is not on the tape, so it reaches the server of the page in `record` and in `gate`. Its status must be below 400, and it is a step like any other: its page is compared, so the server of the port has to answer that path as the original's does (for example by passing it on to the test backend).
+- No step and no case option fakes an answer. An error state is recorded only when the test backend returns the error, so the backend needs a switch, for example a `goto` to `/api/test/fail?method=POST` after the reset, which the reset turns off again.
+
+These addresses belong to your test backend, not to the tool. Never add them to a production one.
 
 ## Secrets
 
@@ -154,7 +155,7 @@ Sizes, positions and screenshots change with the fonts and the machine while the
 - A custom property whose value is a length in pixels (`--initial-height: 58px`, often measured by a script) counts as a size: stored as `[laid out]`, in the computed style and in a `style` attribute, with its value compared only in the same session.
 - The border box of each element (`.box.x`, `.y`, `.width`, `.height`) and the screenshot of each step are compared only in the same session.
 - `record` stores none of these: the recording (format `angular-anything/recording@4`) holds no box, no laid-out value and no PNG, so its lock covers only what a gate compares from it, and a recording made on one machine gates on another. `record` still runs the original twice and fails on sizes or screenshots that differ between the runs, as before; a case names such sizes as noise (`.box.width`, `.layout.width`). A recording in an older format is refused with a message that says to record it again.
-- With `--original-url` the original is run first, the way the port is run: the same case, the stored frames, a fresh browser context. Its stored layers must equal the recording in every step and it must be at rest after the stored frames. If not, the case fails with `the original at <url> does not match its recording`, the first difference, and no size, position or screenshot is compared. Then the port runs, and its sizes, positions and screenshots are compared with those of the original's run, with the case's noise masked on both. When a screenshot differs, the report folder gets both images (`03.png` and `03.original.png`). Its `fetch` and XHR requests are answered from the same tape as those of the port, by the same rules, so `--original-url` only has to serve the page and its files. A finding of the tape in that run counts as a mismatch with the recording.
+- With `--original-url` the original is run first, the way the port is run: the same case, the stored frames, a fresh browser context. Its stored layers must equal the recording in every step and it must be at rest after the stored frames. If not, the case fails with `the original at <url> does not match its recording`, the first difference, and no size, position or screenshot is compared. Then the port runs, and its sizes, positions and screenshots are compared with those of the original's run, with the case's noise masked on both. When a screenshot differs, the report folder of the case gets both images (`03.png` and `03.original.png`), and the summary names the case, the step and both files below its count of screenshots (the first 20, all are in `report.json`). With `--redact` it names the case and the step only, and no image is written. Its `fetch` and XHR requests are answered from the same tape as those of the port, by the same rules, so `--original-url` only has to serve the page and its files. A finding of the tape in that run counts as a mismatch with the recording.
 - Without `--original-url` none of this is compared. The summary says so (`Sizes, positions and screenshots were not compared: no --original-url was given.`), `report.json` has `"original": null`, and the screenshots count as not compared. The stable screenshot is still taken on the port, so both sides wait the same way.
 
 A page can measure a size in a script and write it into another property (`height: var(--front-toast-height)`), which the browser then reports as a fixed length. The tool cannot tell it from a length in the CSS, so the case lists it in `measured`:
@@ -238,7 +239,7 @@ jobs:
 
 ## Recorded values in the port
 
-A port can pass by holding the recorded answers. `gate` looks for that when it is given both `--original-source <dir>` and `--port-source <dir>` (one alone is a usage error, none means no check).
+A port can pass by holding the recorded answers. `gate` looks for that when it is given both `--original-source <dir>` and `--port-source <dir>` (one alone is a usage error, none means no check). The summary of `gate` says when the values were not checked and when the check found nothing. The port source folder must not hold `recordings/` or `cases/`: their files would be read as source of the port and fail the check, so name the source folder of the port and not the root of its project.
 
 - A literal is a quoted string, a template string, a number, the text between two tags or a quoted attribute, also inside an inline template. In a template with `{{ }}`, a control flow block or an ICU message (`plural`, `select`, `selectordinal`), the text beside the braces and block headers counts on its own, so also each branch of a message. Numbered character references and the common named ones (the Latin-1 set and the usual punctuation, quotes, arrows, `&euro;` and `&trade;`) are read in the port and in the original. A quoted attribute may span lines. It counts when it is a string of 8 or more characters or a number of 5 or more significant digits, equals a value of a step file or of the tape of a case of the suite (white space joined and trimmed, a number by its value), and the original source does not hold it.
 - 3 or more distinct ones fail the gate. 1 or 2 are noted. A value that the port may hold as it is stays with a comment `recorded-literal: reason` on its line. The reason must not be empty, and the same words in a string or in text are no comment. In an inline template, `<!-- recorded-literal: reason -->` counts. A `<!--` right before `recorded-literal:` makes it count wherever it stands, also inside a string.
@@ -252,6 +253,7 @@ A port can pass by holding the recorded answers. `gate` looks for that when it i
 
 The DOM is compared as the browser means it, and the browser is asked for what it knows. No CSS is implemented a second time.
 
+- Comments are not compared. These marks of a framework are not either, each only on an element where the framework is proven: the attribute `ng-version` on an element that Angular created, the attribute `data-v-app` on an element that holds a Vue app, and inside an AngularJS app the classes `ng-scope`, `ng-isolate-scope`, `ng-binding`, `ng-pristine`, `ng-dirty`, `ng-touched`, `ng-untouched`, `ng-valid`, `ng-invalid`, `ng-pending`, `ng-empty`, `ng-not-empty`, `ng-submitted` and every class that starts with `ng-valid-` or `ng-invalid-`, plus the attributes described below. Angular's wrapper elements are described under "Choosing the selector of a component in the Angular port". An empty `class` attribute is left out on every element. Other marks are compared, for example the classes `ng-hide` and `ng-animate`, the `data-v-<hash>` attributes of scoped styles in Vue, and the `_ngcontent-*` and `_nghost-*` attributes of Angular's emulated view encapsulation. So give a component with styles `ViewEncapsulation.None`, or keep its styles in a global stylesheet.
 - Text. Adjacent text nodes are joined. Where the parent collapses whitespace (`white-space-collapse` is `collapse`), a run of space, tab and line break counts as one space. A space counts at the start or the end of a text where the browser renders it, or would on a wider line (`<span>a</span> <span>b</span>` is not `<span>a</span><span>b</span>`). It does not count at the start or the end of a block, next to a `br`, next to a block-level or out-of-flow element, after another space, or in whitespace between the items of a list, a table or a flex container. Where a line wraps is never the reason, so the same text gives the same DOM at every width. Which element is a block, an inline box or an atomic inline (an image, a button, an inline block) comes from `getComputedStyle`. Where the parent preserves whitespace (`pre`, `pre-wrap`, `break-spaces`) the text is compared as written. Under `pre-line` a line break counts as written, a run of spaces and tabs counts as one space, and spaces around a line break are removed. A no-break space is text.
 - The `style` attribute is compared as the declarations the browser parsed: each property with its value and priority, in no order. `color: red` and `color: red !important` differ, `color: red; margin: 0` and `margin: 0; color: red` do not. A declaration the browser dropped is not there. A colour in a property that accepts a single colour (`color`, `fill`, `border-top-color`, so also a `border` shorthand) compares as the colour the browser reads, so `red`, `#f00`, `rgb(255, 0, 0)` and `hsl(0 100% 50%)` are equal. The browser is asked through a canvas. `currentcolor`, a value with `var()`, a keyword such as `inherit` and a custom property stay as written. In `box-shadow`, `text-shadow`, `scrollbar-color` and a gradient a colour keyword and the same colour in numbers still differ. A `url()` is resolved against the base URL of the document and the origin of the page in it is replaced by `[page-origin]`, so `url(a.png)`, `url(./a.png)` and the absolute URL on the own origin are equal. A `url(#id)` stays as written, and so does text in a CSS string that only looks like a `url()`.
 - A `textarea` is compared by its value. Its text child is not part of the DOM.
@@ -318,6 +320,51 @@ Strings with structure are compared by their parts, and a difference or a mask n
 - A body is a form (`application/x-www-form-urlencoded`) compared like a query, a multipart body, or JSON (an object or a list, parsed, in no key order). A multipart body is compared by its parts: the name, the file name, the type, the size and the content of a file (as a SHA-256), the text of a field. The boundary is never compared, and neither is the order of parts with different names. Parts with one name keep their order. Anything else is a string. A name, a file name, a value or a whole body whose bytes are not UTF-8 is `base64:` and its bytes, and so is such a percent sequence in a query.
 
 A port that stores `7` where the original stores its random token passes: a stored value that is no JSON object or list is a string, and so is the token, so their kinds cannot tell them apart.
+
+## Sample apps (from a clone)
+
+The sample apps are in the repository. Run these from its root. You need Node 24 or newer and pnpm.
+
+```sh
+pnpm install                            # the tool, the four fixtures and the three trial packages
+pnpm exec playwright install chromium   # the Chromium build that Playwright 1.65.1 expects
+pnpm aa doctor                          # checks Node, the Playwright version and Chromium
+pnpm fixtures:build                     # builds each fixture into fixtures/<name>/dist
+pnpm fixtures:serve                     # serves the fixtures and the mock API
+pnpm fixtures:serve --only react        # serves one: react, vue, angularjs, angular or stub
+pnpm typecheck
+pnpm test
+pnpm build                              # compiles src into dist, which the package ships (packing runs it)
+```
+
+The fixture server listens on 127.0.0.1: React on port 4101, Vue on 4102, AngularJS on 4103, Angular on 4104, and a stub page with an empty `<main>` on 4105.
+
+With the fixtures built and served:
+
+```sh
+pnpm aa record fixture --source react --url http://localhost:4101             # runs the original twice, writes recordings/react
+pnpm aa gate fixture --source react --url http://localhost:4104               # checks the lock, then replays against the port
+pnpm aa replay fixture --source react --url http://localhost:4104             # the same without the lock check
+pnpm aa gate fixture --source react --url 'http://localhost:4104/?bug=aria'   # a seeded bug, exits 1
+pnpm aa gate fixture --source react --url http://localhost:4104 --original-url http://localhost:4101   # also sizes, positions and screenshots
+pnpm aa gate fixture --source react --url http://localhost:4104 --redact      # shapes only, no values and no screenshots
+pnpm aa gate fixture --source react --url http://localhost:4104 --original-source fixtures/react --port-source fixtures/angular
+pnpm aa drift fixture --source react --url http://localhost:4104 --original-url http://localhost:4101  # which side moved
+```
+
+The sources are `react`, `vue` and `angularjs`. The seeded bugs are `double-event`, `missing-class`, `aria`, `text`, `request`, `storage`, `focus` and `style`.
+
+## What exists so far
+
+- A pnpm workspace with one install for the tool, the fixtures and the trial packages.
+- `src/`, the CLI and the verifier. `doctor`, `record`, `replay`, `gate` and `drift` work.
+- `test/`, the unit tests and end-to-end tests that drive the CLI against small pages.
+- `fixtures/react`, `fixtures/vue` and `fixtures/angularjs`, the Tasks fixture written three times as an original, and `fixtures/angular`, its Angular port. The port misbehaves on purpose when the URL has `?bug=<name>`.
+- `fixtures/shared/fixture.css`, the one stylesheet that all four load.
+- `fixtures/server.ts`, which serves the built fixtures and the mock API. `record` asks that API, `gate` and `replay` do not (see "The network tape").
+- `cases/fixture`, nineteen cases for the Tasks fixture.
+- `recordings/react`, `recordings/vue` and `recordings/angularjs`, the locked recordings of the three originals.
+- `trials/todomvc` and `trials/sonner`, the two trial ports (an original and its Angular port each), with `cases/todomvc`, `cases/sonner`, `recordings/todomvc-react` and `recordings/sonner-react`.
 
 ## Notes
 

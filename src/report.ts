@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { LAYERS, LAYER_NAMES } from './compare.ts';
 import type { Difference, DifferenceKind, Layer, LayerResult } from './compare.ts';
 import { FAILING_LITERALS } from './literals.ts';
@@ -5,6 +6,7 @@ import type { LiteralCheck } from './literals.ts';
 import { sha256 } from './lock.ts';
 import type { Unread } from './page.ts';
 import { collapseIndices, keyPath } from './path.ts';
+import { stepFile } from './record.ts';
 import { isObject, kindOf } from './value.ts';
 
 export const REPORT_FORMAT = 'angular-anything/report@1';
@@ -257,7 +259,24 @@ function copied({ found, named }: LiteralCheck): string[] {
   return lines.length > 0 ? ['', ...lines] : [];
 }
 
-export function summarize(report: Report): string {
+function differentShots({ source, cases }: Report, images: boolean): string[] {
+  const shots = cases.flatMap(({ id, steps }) =>
+    steps.filter((step) => step.screenshot === 'different').map(({ step }) => {
+      const file = join('reports', source, id, stepFile(step - 1));
+      return `      ${id}, step ${step}${images ? `: ${file}.png and ${file}.original.png` : ''}`;
+    }),
+  );
+  if (shots.length <= LISTED_GROUPS) return shots;
+  return [...shots.slice(0, LISTED_GROUPS), `      and ${shots.length - LISTED_GROUPS} more in report.json`];
+}
+
+function checked({ command, literals }: Report): string[] {
+  if (command !== 'gate') return [];
+  if (!literals) return ['Recorded values in the port were not checked: no --original-source and --port-source were given.'];
+  return literals.found.length + literals.named.length === 0 ? ['Recorded values in the port were checked: nothing found.'] : [];
+}
+
+export function summarize(report: Report, images = true): string {
   const lines = [
     `angular-anything ${report.command}: ${report.result === 'pass' ? 'PASS' : 'FAIL'}`,
     `suite ${report.suite}, source ${report.source}, url ${report.url}${report.original ? `, original ${report.original}` : ''}`,
@@ -320,9 +339,11 @@ export function summarize(report: Report): string {
       `${steps.filter((step) => step.result === 'fail').length} of ${steps.length} compared steps differ.`,
     `Values not compared because the case names them as noise: ${masked}.`,
     `Screenshots (soft, they never fail the gate): ${shots('identical')} identical, ${shots('different')} different, ${shots('masked')} masked, ${shots('not compared')} not compared.`,
+    ...differentShots(report, images),
   );
   const credentials = [...new Set(report.cases.flatMap((item) => item.credentials ?? []))].sort();
   if (credentials.length > 0) lines.push(`Values of credential headers (${credentials.join(', ')}) were not compared.`);
   if (!report.original) lines.push('Sizes, positions and screenshots were not compared: no --original-url was given.');
+  lines.push(...checked(report));
   return lines.join('\n');
 }

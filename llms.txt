@@ -4,6 +4,8 @@
 
 Status: early. Tested on macOS only. Read https://github.com/erkamyaman/angular-anything/blob/main/docs/reference.md before relying on it.
 
+Loading and pending UI is never compared (a spinner, a "Loading..." text, a button that is disabled while saving). A request is answered before a step is observed, so a port without that UI passes. Compare it with the original by reading its code.
+
 ## Install
 
 Needs Node 24 or newer.
@@ -13,7 +15,21 @@ Needs Node 24 or newer.
 
 If `doctor` says Chromium is missing, run the command it prints.
 
-In the commands below, `aa` stands for `angular-anything`. Run it from the folder that holds `cases/`, usually the root of the app you port.
+In the commands below, `aa` stands for `angular-anything`. Run it from the folder that holds `cases/`.
+
+## Set up the port
+
+The port is a normal Angular project made with the Angular CLI (`ng new`). The tool is tested with Angular 22. One layout that works, with every `aa` command run from `port/`:
+
+    original/                    the app as it is
+    port/                        the Angular project
+      src/
+      cases/<suite>/<id>/case.json
+      recordings/<source>/       written by record
+      reports/<source>/          written by gate, replay and drift
+
+- Angular removes white space between elements by default. Where the original has white space that the browser renders, for example between two inline elements or on two lines of a form, set `preserveWhitespaces: true` on the component and keep that space in the template.
+- The gate compares attributes, also the `_ngcontent-*` ones of emulated view encapsulation. Give a component with styles `ViewEncapsulation.None`, or keep its styles in a global stylesheet.
 
 ## Commands
 
@@ -30,7 +46,9 @@ In the commands below, `aa` stands for `angular-anything`. Run it from the folde
 - `drift` says whether the original changed or the port regressed.
 - `--original-url` also compares sizes, positions and screenshots (screenshots never fail the gate).
 - `--redact` (`replay`, `gate`) writes shapes only, no values.
-- `--original-source <dir> --port-source <dir>` (`gate`) fails a port that holds recorded values the original source does not hold.
+- `--original-source <dir> --port-source <dir>` (`gate`) fails a port that holds recorded values the original source does not hold. In the layout above: `--original-source ../original --port-source src`. The port source folder must not hold `recordings/` or `cases/`, or their own files fail the check, so do not give the root of the project. The original source folder must not hold the port source or `recordings/`, or lie inside `recordings/`.
+
+`record` and `gate` take a while: in one trial 24 cases took about 2.5 minutes to record and 2 minutes to gate. There is no option that runs a single case, so run both with a long timeout.
 
 Exit codes of `gate` and `replay`: 0 everything matches, 1 mismatch or refused recording, 2 wrong command line.
 
@@ -47,20 +65,30 @@ Exit codes of `gate` and `replay`: 0 everything matches, 1 mismatch or refused r
         { "action": "goto", "path": "/" },
         { "action": "fill", "target": { "role": "textbox", "name": "New task" }, "value": "Call mom" },
         { "action": "click", "target": { "role": "button", "name": "Add" } },
+        { "action": "press", "target": { "role": "textbox", "name": "New task" }, "key": "Enter" },
         { "action": "advance", "frames": 125 }
       ]
     }
 
 Actions: `goto`, `click`, `dblclick`, `hover`, `check`, `uncheck`, `fill`, `press`, `reload`, `advance`. Targets are found by accessibility role and name, with `index` and `within` when more than one matches. The clock of the page is paused and moves only with `advance` (one frame is 16 ms).
 
+## Backend state and error states
+
+`record` sends the requests of the first run of each case to the real backend, writes included, and resets nothing. What one case writes is still there in the next case and in the next `record`. The second run of a case gets its `fetch` and XHR answers from the first.
+
+- Give the test backend a reset address and visit it before the app: `{ "action": "goto", "path": "/api/reset" }` as step 1, then `{ "action": "goto", "path": "/" }`. A `goto` is a page load that is not answered from the recording, in `record` and in `gate`. It must answer with a status below 400 and its page is compared like any step, so the server of the port has to answer that path as the original's does (for example by passing it on to the test backend).
+- The tool cannot fake an answer. To record an error state the test backend must return the error, so it needs a switch, for example `{ "action": "goto", "path": "/api/test/fail?method=POST" }` after the reset. The reset has to turn the switch off again.
+
+Both addresses are ones you build into a test backend. Never add them to a production one.
+
 ## Porting workflow
 
-1. Start the original app and its backend with test data. `record` sends real requests to it, writes included, and does not reset it.
+1. Start the original app and its backend with test data. `record` sends real requests to it, writes included, and does not reset it (see "Backend state and error states").
 2. Write the cases yourself, do not wait for the user to describe them. Read the routes, forms, buttons and requests in the code, use the running app, and write one case per thing a user can do, including empty, error and reload states. Start small, then tell the user which flows are covered and which are not.
 3. Run `aa record`. If it refuses (the two runs differ, a secret is found, the page does something the tape cannot hold), read the message and the reference. Do not remove a check to make it pass.
 4. Port the app to Angular. Mount each component on an element the original already has, so that no wrapper element or extra attribute appears (reference, "Choosing the selector of a component in the Angular port").
-5. Start the port and run `aa gate`. Fix the port, not the recording, until it exits 0.
-6. Run `aa gate` with `--original-url` while the original still runs.
+5. Start the port and run `aa gate` with `--original-source` and `--port-source`. Fix the port, not the recording, until it exits 0.
+6. Run `aa gate` again, with `--original-url` added, while the original still runs.
 
 ## Rules for agents
 

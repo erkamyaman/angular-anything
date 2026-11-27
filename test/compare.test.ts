@@ -301,7 +301,8 @@ FAIL  details
 
 1 of 1 cases failed. 1 of 1 compared steps differ.
 Values not compared because the case names them as noise: 0.
-Screenshots (soft, they never fail the gate): 1 identical, 0 different, 0 masked, 0 not compared.`,
+Screenshots (soft, they never fail the gate): 1 identical, 0 different, 0 masked, 0 not compared.
+Recorded values in the port were not checked: no --original-source and --port-source were given.`,
   );
 });
 
@@ -312,7 +313,7 @@ test('a report passes only when every step of every case ran and matched', () =>
 
   const different = report(() => {}, 'different');
   assert.equal(different.result, 'pass', 'a screenshot never fails the gate');
-  assert.match(summarize(different), /0 identical, 1 different, 0 masked, 0 not compared\.$/);
+  assert.match(summarize(different), /0 identical, 1 different, 0 masked, 0 not compared\.$/m);
 
   const unfinished = report(() => {});
   unfinished.cases[0].stepCount = 2;

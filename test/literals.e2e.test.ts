@@ -61,10 +61,12 @@ test('without the two source folders nothing is checked, with an honest port the
   assert.equal(without.status, 0, without.output);
   assert.doesNotMatch(without.output, /literal/);
   assert.equal((await report()).literals, undefined);
+  assert.match(without.output, /^Recorded values in the port were not checked: no --original-source and --port-source were given\.$/m);
   const honest = await gate(...sources('honest'));
   assert.equal(honest.status, 0, honest.output);
   assert.doesNotMatch(honest.output, /^(FAIL|note:)/m);
   assert.deepEqual((await report()).literals, { result: 'pass', found: [], named: [] });
+  assert.match(honest.output, /^Recorded values in the port were checked: nothing found\.$/m);
 });
 
 test('one recorded literal is noted and the gate passes', async () => {

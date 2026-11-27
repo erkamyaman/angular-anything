@@ -230,7 +230,7 @@ export async function replay(options: Replaying): Promise<number> {
     report.distinct = distinct(found);
     const finished = finish(report);
     const shown = redact ? redactReport(finished) : hideReport(finished, hider(cases.map((loaded) => loaded.case)));
-    const summary = summarize(shown);
+    const summary = summarize(shown, !redact);
     await writeFile(join(out, 'report.json'), toJson(shown));
     await writeFile(join(out, 'summary.txt'), `${summary}\n`);
     console.log(`${summary}\n\nReport: ${join('reports', source, 'report.json')}`);

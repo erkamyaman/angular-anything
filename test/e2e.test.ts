@@ -354,6 +354,11 @@ test('gate passes when only pixels differ, and reports the screenshots as differ
   assert.equal(status, 0, output);
   assert.match(output, /^angular-anything gate: PASS$/m);
   assert.match(output, /0 identical, 8 different, 0 masked, 0 not compared\.$/m);
+  assert.match(output, /^ {6}save, step 3: reports\/original\/save\/03\.png and reports\/original\/save\/03\.original\.png$/m);
+  await access(join(root, 'reports', 'original', 'save', '03.original.png'));
+  const redacted = await run('gate', 'tiny', '--source', 'original', '--url', `${port}/?bug=pixels`, '--original-url', original, '--redact');
+  assert.match(redacted.output, /^ {6}save, step 3$/m);
+  assert.doesNotMatch(redacted.output, /\.png/);
 });
 
 test('replay writes the report, the summary and the screenshots that differ, and exits 1 on a mismatch', async () => {

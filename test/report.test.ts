@@ -90,3 +90,39 @@ test('the summary lists 20 literals and 20 named files and says how many more re
   assert.equal(text.match(/^ {6}a\.ts:\d+: tape\.json$/gm)!.length, 20);
   assert.equal(text.match(/^ {6}and 5 more in report\.json$/gm)!.length, 2);
 });
+
+test('the summary of a gate says that the recorded values were not checked, or that the check found nothing', () => {
+  const unchecked = /^Recorded values in the port were not checked: no --original-source and --port-source were given\.$/m;
+  const clean = /^Recorded values in the port were checked: nothing found\.$/m;
+  const gate = report([item([step()])]);
+  assert.match(summarize(gate), unchecked);
+  assert.doesNotMatch(summarize(gate), clean);
+  const checked = summarize({ ...gate, literals: { result: 'pass', found: [], named: [] } });
+  assert.match(checked, clean);
+  assert.doesNotMatch(checked, unchecked);
+  const noted = summarize({ ...gate, literals: { result: 'pass', found: [{ file: 'a.ts', line: 1, value: 'Call the bank' }], named: [] } });
+  const named = summarize({ ...gate, literals: { result: 'fail', found: [], named: [{ file: 'a.ts', line: 1, name: 'tape.json' }] } });
+  for (const text of [noted, named]) {
+    assert.doesNotMatch(text, clean);
+    assert.doesNotMatch(text, unchecked);
+  }
+  for (const command of ['replay', 'drift'] as const) assert.doesNotMatch(summarize({ ...gate, command }), /Recorded values/);
+});
+
+test('the summary names the case, the step and both images of each screenshot that differs', () => {
+  const at = (number: number, screenshot: StepReport['screenshot']) => stepReport(number, 'click', timing, screenshot, layers());
+  const text = summarize(finish(report([item([at(1, 'identical'), at(3, 'different'), at(4, 'masked')]), item([at(12, 'different')], { id: 'two' })])));
+  assert.match(
+    text,
+    /^Screenshots \(soft.*2 different.*\n {6}one, step 3: reports\/react\/one\/03\.png and reports\/react\/one\/03\.original\.png\n {6}two, step 12: reports\/react\/two\/12\.png and reports\/react\/two\/12\.original\.png$/m,
+  );
+  assert.doesNotMatch(text, /step (1|4): reports/);
+});
+
+test('without written images the summary names the case and the step only, and it lists 20 screenshots', () => {
+  const steps = Array.from({ length: 25 }, (_, at) => stepReport(at + 1, 'click', timing, 'different', layers()));
+  const text = summarize(finish(report([item(steps)])), false);
+  assert.equal(text.match(/^ {6}one, step \d+$/gm)!.length, 20);
+  assert.match(text, /^ {6}and 5 more in report\.json$/m);
+  assert.doesNotMatch(text, /\.png/);
+});
