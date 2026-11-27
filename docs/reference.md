@@ -1,6 +1,6 @@
 # Reference
 
-**Status: spike. Not published, not stable.** The plan for the current milestone is in [SPIKE.md](../SPIKE.md). What was measured is in [SPIKE-RESULTS.md](../SPIKE-RESULTS.md).
+**Status: early, not stable.** The plan for the current milestone is in [SPIKE.md](../SPIKE.md). What was measured is in [SPIKE-RESULTS.md](../SPIKE-RESULTS.md).
 
 Tested on macOS only. Linux is untested. The fixes of 2026-11-27 were reviewed once. What that review found is fixed, and those fixes have not had a second review.
 

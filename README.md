@@ -74,7 +74,14 @@ Read https://raw.githubusercontent.com/erkamyaman/angular-anything/main/llms.txt
 > [!TIP]
 > **Agents:** read [llms.txt](https://github.com/erkamyaman/angular-anything/blob/main/llms.txt) for the install steps, every command and the porting workflow.
 
-Or try it yourself. Angular Anything is not on npm yet, so run it from a clone. You need Node 24 or newer and pnpm.
+Or install it yourself (Node 24 or newer):
+
+```sh
+npm install -g angular-anything
+angular-anything doctor   # prints the command that installs Chromium if it is missing
+```
+
+To try it on the sample apps, run it from a clone (needs pnpm):
 
 ```sh
 git clone https://github.com/erkamyaman/angular-anything

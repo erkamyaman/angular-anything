@@ -2,18 +2,18 @@
 
 > Move a React, Vue or AngularJS app or library to modern Angular with agents, and prove it still behaves the same. The tool records the original in Chromium and fails the Angular port on any difference it compares. It does not write the port: your agent does.
 
-Status: early. Not on npm. Tested on macOS only. Read https://github.com/erkamyaman/angular-anything/blob/main/docs/reference.md before relying on it.
+Status: early. Tested on macOS only. Read https://github.com/erkamyaman/angular-anything/blob/main/docs/reference.md before relying on it.
 
 ## Install
 
-Needs Node 24 or newer and pnpm.
+Needs Node 24 or newer.
 
-    git clone https://github.com/erkamyaman/angular-anything
-    cd angular-anything
-    pnpm install
-    pnpm exec playwright install chromium
+    npm install -g angular-anything
+    angular-anything doctor
 
-In the commands below, `aa` stands for `node <path to the clone>/src/cli.ts`. Run it from the folder that holds `cases/`, usually the root of the app you port.
+If `doctor` says Chromium is missing, run the command it prints.
+
+In the commands below, `aa` stands for `angular-anything`. Run it from the folder that holds `cases/`, usually the root of the app you port.
 
 ## Commands
 
