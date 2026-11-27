@@ -1,6 +1,6 @@
 {
   "name": "angular-anything",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Move your app or library to Angular with agents, and prove it still behaves the same.",
   "license": "MIT",
   "repository": {
